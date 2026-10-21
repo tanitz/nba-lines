@@ -1,12 +1,12 @@
 <!doctype html>
-<html lang="th">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>NBA Line Tracker</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Thai:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -14,38 +14,39 @@
 <div class="app">
   <header class="top">
     <div class="brand">
-      <h1>ตามราคา NBA</h1>
-      <p class="sub">แฮนดิแคปและสูง/ต่ำ ก่อนเริ่มแข่ง</p>
+      <h1>NBA Line Tracker</h1>
+      <p class="sub">Pre-game spread and total movement</p>
     </div>
     <div class="status" id="status" aria-live="polite"></div>
   </header>
 
-  <p class="demo-note" id="demoNote" hidden>ข้อมูลตัวอย่างแบบสุ่ม ไม่ใช่ราคาจริง ใส่คีย์ The Odds API เพื่อเริ่มเก็บราคาจริง</p>
+  <p class="demo-note" id="demoNote" hidden>Demo mode: randomly generated sample data, not real odds.</p>
 
   <div class="poll-form" id="pollForm" hidden>
-    <label for="tokenInput">รหัสผู้ดูแล (ADMIN_TOKEN)</label>
+    <label for="tokenInput">Admin token (ADMIN_TOKEN)</label>
     <div class="poll-row">
       <input id="tokenInput" type="password" autocomplete="off">
-      <button type="button" id="pollGo" class="btn">ดึงราคา</button>
+      <button type="button" id="pollGo" class="btn">Fetch odds</button>
     </div>
     <p class="poll-msg" id="pollMsg"></p>
   </div>
 
-  <nav class="filters" aria-label="ตัวกรอง">
+  <nav class="filters" aria-label="Filters">
     <div class="seg" role="tablist" id="scopeTabs">
-      <button type="button" role="tab" data-scope="upcoming" id="tabUpcoming">ก่อนแข่ง</button>
-      <button type="button" role="tab" data-scope="recent" id="tabRecent">แข่งแล้ว</button>
+      <button type="button" role="tab" data-scope="upcoming" id="tabUpcoming">Upcoming</button>
+      <button type="button" role="tab" data-scope="recent" id="tabRecent">Final</button>
     </div>
     <label class="field">
-      <span>เจ้ามือ</span>
+      <span>Bookmaker</span>
       <select id="bookSelect"></select>
     </label>
     <label class="field">
-      <span>ค่าน้ำ</span>
+      <span>Odds format</span>
       <select id="fmtSelect">
-        <option value="hk">ฮ่องกง</option>
-        <option value="my">มาเลย์</option>
-        <option value="eu">ยุโรป</option>
+        <option value="eu">Decimal</option>
+        <option value="hk">Hong Kong</option>
+        <option value="my">Malay</option>
+        <option value="us">American</option>
       </select>
     </label>
   </nav>
@@ -53,7 +54,7 @@
   <main id="view"></main>
 
   <footer class="foot">
-    ข้อมูลราคาจาก The Odds API · เวลาแสดงตามเขตเวลาของเครื่องคุณ
+    Odds data from The Odds API. Times shown in your device's time zone.
   </footer>
 </div>
 <!--APP-END-->

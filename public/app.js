@@ -1,11 +1,13 @@
-/* ตามราคา NBA — หน้าเว็บ (ใช้ได้ทั้งกับเซิร์ฟเวอร์จริง และโหมดไฟล์เดียวที่ฝังข้อมูลไว้ใน window.STATIC_DATA) */
+/* NBA Line Tracker — frontend.
+ * Works with the Node server (/api/*), a static site (window.STATIC_BASE → data/*.json),
+ * or a single file with data embedded (window.STATIC_DATA). */
 (() => {
   'use strict';
 
   const STATIC = window.STATIC_DATA || null;
   const CONSENSUS = 'consensus';
 
-  // ---------- ตัวช่วย ----------
+  // ---------- helpers ----------
   const $ = (s, r = document) => r.querySelector(s);
   function h(tag, attrs, ...kids) {
     const el = document.createElement(tag);
@@ -23,7 +25,7 @@
   }
   const store = {
     get(k, d) { try { const v = localStorage.getItem('nlt.' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
-    set(k, v) { try { localStorage.setItem('nlt.' + k, JSON.stringify(v)); } catch { /* ไม่มีที่เก็บก็ไม่เป็นไร */ } },
+    set(k, v) { try { localStorage.setItem('nlt.' + k, JSON.stringify(v)); } catch { /* storage unavailable */ } },
   };
 
   const TEAM = {
@@ -38,57 +40,65 @@
   };
   const ab = (n) => TEAM[n] || String(n).split(' ').pop().slice(0, 3).toUpperCase();
 
+  // ---------- number formats ----------
   const num = (v) => String(Math.round(v * 100) / 100);
-  const fmtOdds = (d, f = state.fmt) => {
-    if (d == null || !Number.isFinite(d)) return '–';
-    if (f === 'eu') return d.toFixed(2);
-    const hk = d - 1;
-    if (f === 'my') return (d >= 2 ? -1 / hk : hk).toFixed(2);
-    return hk.toFixed(2);
-  };
-  // กราฟค่าน้ำ: มาเลย์มีจุดกระโดด +1/-1 จึงวาดเป็นฮ่องกงแทน
-  const chartOdds = (d) => (state.fmt === 'eu' ? d : d - 1);
+  const signed = (v) => (v > 0 ? `+${num(v)}` : v < 0 ? `-${num(-v)}` : '0');
 
+  const FMT_NAME = { eu: 'Decimal', hk: 'Hong Kong', my: 'Malay', us: 'American' };
+  function fmtOdds(d, f = state.fmt) {
+    if (d == null || !Number.isFinite(d)) return '–';
+    const hk = d - 1;
+    if (f === 'hk') return hk.toFixed(2);
+    if (f === 'my') return (d >= 2 ? -1 / hk : hk).toFixed(2);
+    if (f === 'us') return d >= 2 ? `+${Math.round(hk * 100)}` : `-${Math.round(100 / hk)}`;
+    return d.toFixed(2);
+  }
+  // Malay and American jump across ±1 / ±100, so their charts plot Hong Kong / Decimal instead.
+  const chartFmt = () => (state.fmt === 'hk' || state.fmt === 'my' ? 'hk' : 'eu');
+  const chartOdds = (d) => (chartFmt() === 'hk' ? d - 1 : d);
+
+  /** Spread is stored from the home side; show it from the favourite: "BOS -5.5". */
   const spreadText = (line, g) => {
+    if (line == null) return '–';
     if (line === 0) return 'PK';
-    return `${line < 0 ? ab(g.home) : ab(g.away)} ต่อ ${num(Math.abs(line))}`;
+    return line < 0 ? `${ab(g.home)} -${num(-line)}` : `${ab(g.away)} -${num(line)}`;
   };
+  /** A negative change in the home line means the market moved toward the home team. */
   const spreadMove = (delta, g) => {
     if (!delta) return null;
-    return delta < 0 ? `ไหล ${ab(g.home)} ${num(-delta)}` : `ไหล ${ab(g.away)} ${num(delta)}`;
+    return delta < 0 ? `${ab(g.home)} ${num(-delta)}` : `${ab(g.away)} ${num(delta)}`;
   };
-  const totalMove = (delta) => (!delta ? null : delta > 0 ? `ขึ้น ${num(delta)}` : `ลง ${num(-delta)}`);
+  const totalMove = (delta) => (!delta ? null : signed(delta));
 
+  // ---------- dates ----------
   const T = {
-    time: new Intl.DateTimeFormat('th-TH', { hour: '2-digit', minute: '2-digit', hour12: false }),
-    day: new Intl.DateTimeFormat('th-TH', { weekday: 'long', day: 'numeric', month: 'short' }),
+    time: new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false }),
+    day: new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'long' }),
+    dayShort: new Intl.DateTimeFormat('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }),
     dayKey: new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit' }),
-    short: new Intl.DateTimeFormat('th-TH', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }),
+    stamp: new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }),
   };
-  function rel(iso, now = Date.now()) {
-    const ms = Date.parse(iso) - now;
-    const past = ms < 0;
+  function span(ms) {
     let m = Math.round(Math.abs(ms) / 60000);
-    let s;
-    if (m < 1) s = 'ไม่ถึงนาที';
-    else if (m < 60) s = `${m} นาที`;
-    else if (m < 48 * 60) { const hh = Math.floor(m / 60); m %= 60; s = m ? `${hh} ชม. ${m} นาที` : `${hh} ชม.`; }
-    else s = `${Math.round(m / 1440)} วัน`;
-    return past ? `${s}ที่แล้ว` : `อีก ${s}`;
+    if (m < 1) return 'under a minute';
+    if (m < 60) return `${m} min`;
+    if (m < 48 * 60) { const hh = Math.floor(m / 60); m %= 60; return m ? `${hh}h ${m}m` : `${hh}h`; }
+    return `${Math.round(m / 1440)} days`;
   }
+  const rel = (iso) => {
+    const ms = Date.parse(iso) - Date.now();
+    return ms < 0 ? `${span(ms)} ago` : `in ${span(ms)}`;
+  };
 
-  function cssVar(name) {
-    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-  }
+  const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
-  // ---------- ข้อมูล ----------
+  // ---------- data ----------
   async function fetchJSON(url, opts) {
     const r = await fetch(url, opts);
     const body = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
     return body;
   }
-  // โหมดเว็บไฟล์นิ่ง (GitHub Pages): อ่าน data/index.json และ data/g/<id>.json
   const BASE = !STATIC && window.STATIC_BASE ? window.STATIC_BASE : null;
   let indexCache = null;
   function siteIndex() {
@@ -116,16 +126,17 @@
   const state = {
     scope: 'upcoming',
     book: null,
-    fmt: store.get('fmt', 'hk'),
+    fmt: (() => { const f = store.get('fmt', 'hk'); return FMT_NAME[f] ? f : 'hk'; })(),
     status: null,
     games: [],
     gameId: null,
     detail: null,
     charts: [],
+    showAll: false,
     error: null,
   };
 
-  // ---------- สถานะการดึงราคา ----------
+  // ---------- status bar ----------
   function renderStatus() {
     const s = state.status;
     const el = $('#status');
@@ -133,181 +144,180 @@
     $('#demoNote').hidden = !(s && s.demo);
     if (!s) return;
     if (!s.demo && !s.hasKey) {
-      el.append(h('span', null, h('i', { class: 'dot err' }), 'ยังไม่ได้ตั้ง ODDS_API_KEY'));
+      el.append(h('span', null, h('i', { class: 'dot err' }), 'ODDS_API_KEY is not set'));
       return;
     }
     const la = s.lastAttempt;
     if (la && !la.ok) {
-      el.append(h('span', { class: 'err-text' }, h('i', { class: 'dot err' }), `ดึงไม่สำเร็จ ${rel(la.at)}: ${la.error || ''}`));
+      el.append(h('span', { class: 'err-text' }, h('i', { class: 'dot err' }), `Last fetch failed ${rel(la.at)}: ${la.error || ''}`));
     } else if (s.lastSuccess) {
-      el.append(h('span', null, h('i', { class: 'dot ok' }), 'ดึงล่าสุด ', h('b', null, rel(s.lastSuccess.at))));
+      el.append(h('span', null, h('i', { class: 'dot ok' }), 'Updated ', h('b', null, rel(s.lastSuccess.at))));
     } else {
-      el.append(h('span', null, h('i', { class: 'dot' }), 'ยังไม่เคยดึงราคา'));
+      el.append(h('span', null, h('i', { class: 'dot' }), 'No odds fetched yet'));
     }
     if (s.nextPollAt) {
-      el.append(h('span', null, 'รอบถัดไป ', h('b', null, T.time.format(new Date(s.nextPollAt))),
-        s.intervalMin ? ` (ทุก ${s.intervalMin} นาที)` : ''));
+      el.append(h('span', null, 'Next check ', h('b', null, `~${T.time.format(new Date(s.nextPollAt))}`)));
     }
     if (s.credits && s.credits.remaining != null) {
-      el.append(h('span', null, 'เครดิตเหลือ ', h('b', null, s.credits.remaining.toLocaleString('th-TH'))));
+      el.append(h('span', null, 'API credits left ', h('b', null, s.credits.remaining.toLocaleString('en-US'))));
     }
     if (s.canPoll) {
       el.append(h('button', { type: 'button', class: 'linkbtn', onclick: () => {
         const f = $('#pollForm');
         f.hidden = !f.hidden;
         if (!f.hidden) { $('#tokenInput').value = store.get('token', ''); $('#tokenInput').focus(); }
-      } }, 'ดึงราคาตอนนี้'));
+      } }, 'Fetch now'));
     }
   }
 
   async function pollNow() {
     const token = $('#tokenInput').value.trim();
     const msg = $('#pollMsg');
-    if (!token) { msg.textContent = 'ใส่รหัสผู้ดูแลก่อน'; return; }
+    if (!token) { msg.textContent = 'Enter the admin token first.'; return; }
     store.set('token', token);
-    msg.textContent = 'กำลังดึงราคา…';
+    msg.textContent = 'Fetching odds…';
     try {
       const r = await fetchJSON('/api/poll', { method: 'POST', headers: { 'x-admin-token': token } });
-      msg.textContent = r.ok ? `ดึงแล้ว ${r.games} แมตช์ ราคาเปลี่ยน ${r.changes} รายการ` : `ไม่สำเร็จ: ${r.error}`;
+      msg.textContent = r.ok ? `Fetched ${r.games} games, ${r.changes} price changes.` : `Failed: ${r.error}`;
       await refresh();
     } catch (e) {
-      msg.textContent = `ไม่สำเร็จ: ${e.message}`;
+      msg.textContent = `Failed: ${e.message}`;
     }
   }
 
-  // ---------- ตัวกรอง ----------
+  // ---------- filters ----------
   function renderFilters() {
     for (const b of document.querySelectorAll('#scopeTabs button')) {
       b.setAttribute('aria-selected', String(b.dataset.scope === state.scope));
     }
     const sel = $('#bookSelect');
-    sel.replaceChildren(h('option', { value: CONSENSUS }, 'ค่ากลางตลาด'));
+    sel.replaceChildren(h('option', { value: CONSENSUS }, 'Market consensus'));
     for (const b of state.status?.bookmakers ?? []) sel.append(h('option', { value: b.key }, b.title));
     sel.value = state.book;
     $('#fmtSelect').value = state.fmt;
     $('#scopeTabs').hidden = !!state.gameId;
   }
 
-  // ---------- กราฟจิ๋ว ----------
-  function sparkline(spark) {
-    const NS = 'http://www.w3.org/2000/svg';
-    const svg = document.createElementNS(NS, 'svg');
-    svg.setAttribute('class', 'spark');
-    svg.setAttribute('viewBox', '0 0 56 18');
-    svg.setAttribute('aria-hidden', 'true');
-    const pts = [];
-    for (const p of spark || []) if (!pts.length || pts[pts.length - 1][1] !== p[1]) pts.push(p);
-    if (pts.length < 1) return svg;
-    const x0 = pts[0][0];
-    const x1 = Math.max(spark[spark.length - 1][0], x0 + 1);
-    const ys = pts.map((p) => p[1]);
-    const lo = Math.min(...ys); const hi = Math.max(...ys);
-    const X = (x) => 2 + ((x - x0) / (x1 - x0)) * 50;
-    const Y = (y) => (hi === lo ? 9 : 15 - ((y - lo) / (hi - lo)) * 12);
-    let d = `M${X(pts[0][0]).toFixed(1)},${Y(pts[0][1]).toFixed(1)}`;
-    for (let i = 1; i < pts.length; i++) d += `H${X(pts[i][0]).toFixed(1)}V${Y(pts[i][1]).toFixed(1)}`;
-    d += `H${X(x1).toFixed(1)}`;
-    const path = document.createElementNS(NS, 'path');
-    path.setAttribute('d', d);
-    const c = document.createElementNS(NS, 'circle');
-    c.setAttribute('cx', X(x1).toFixed(1)); c.setAttribute('cy', Y(pts[pts.length - 1][1]).toFixed(1)); c.setAttribute('r', '2');
-    svg.append(path, c);
-    return svg;
-  }
-
-  // ---------- ผลการแข่งขันเทียบราคาปิด ----------
+  // ---------- results vs closing line ----------
   function verdict(g, closeSpread, closeTotal) {
     if (!g.score || !g.score.completed) return null;
     const margin = g.score.home - g.score.away;
-    const out = [];
+    let ats = null;
+    let ou = null;
     if (closeSpread != null) {
-      const ats = margin + closeSpread;
-      out.push(ats === 0 ? 'เสมอราคา' : `${ats > 0 ? ab(g.home) : ab(g.away)} ชนะราคา`);
+      const v = margin + closeSpread;
+      ats = v === 0 ? 'Push' : `${v > 0 ? ab(g.home) : ab(g.away)} covered`;
     }
     if (closeTotal != null) {
       const sum = g.score.home + g.score.away;
-      out.push(sum === closeTotal ? 'สูง/ต่ำ เสมอ' : sum > closeTotal ? 'ออกสูง' : 'ออกต่ำ');
+      ou = sum === closeTotal ? 'Push' : sum > closeTotal ? 'Over' : 'Under';
     }
-    return out;
+    return { ats, ou, score: `${ab(g.away)} ${g.score.away} – ${g.score.home} ${ab(g.home)}` };
   }
 
-  // ---------- หน้ารายการ ----------
-  function mktRow(label, sum, g, kind) {
-    if (!sum) {
-      return h('div', { class: 'mkt' }, h('span', { class: 'k' }, label), h('span', { class: 'v' }, '–'), h('span', { class: 'move flat' }, ''));
-    }
-    const txt = kind === 'spreads' ? spreadText : (l) => num(l);
-    const mv = kind === 'spreads' ? spreadMove(sum.delta, g) : totalMove(sum.delta);
-    // ฝั่งต่อเดิม: แสดงแค่ตัวเลขใหม่ เช่น "DEN ต่อ 10 → 9.5"
-    const sameSide = kind === 'spreads' && Math.sign(sum.open.line) === Math.sign(sum.now.line) && sum.now.line !== 0;
-    const to = sameSide ? num(Math.abs(sum.now.line)) : txt(sum.now.line, g);
-    const v = sum.delta
-      ? h('span', { class: 'v' }, txt(sum.open.line, g), h('span', { class: 'arrow' }, '→'), to)
-      : h('span', { class: 'v' }, txt(sum.now.line, g));
-    return h('div', { class: 'mkt' },
-      h('span', { class: 'k' }, label), v,
-      h('span', { class: mv ? 'move' : 'move flat' }, mv || 'คงที่'),
-      sparkline(sum.spark));
-  }
-
-  function timeNote(g) {
-    const ms = Date.parse(g.commence) - Date.now();
-    if (ms <= 0) return g.score?.completed ? 'จบ' : (g.score ? 'กำลังแข่ง' : '');
-    if (ms >= 12 * 3600_000) return '';
-    const m = Math.round(ms / 60000);
-    return m < 60 ? `อีก ${m} นาที` : `อีก ${Math.round(m / 60)} ชม.`;
-  }
+  // ---------- board (game list as a table) ----------
+  const cell = (v, cls) => h('td', { class: cls || null }, v ?? '–');
+  const moveCell = (txt, arrow) => h('td', { class: txt ? 'mv' : 'mv flat' }, txt ? `${arrow}${txt}` : '—');
 
   function renderBoard() {
     const view = $('#view');
     view.replaceChildren();
     if (state.error) {
-      view.append(h('div', { class: 'empty' }, h('strong', null, 'โหลดข้อมูลไม่ได้'), state.error));
+      view.append(h('div', { class: 'empty' }, h('strong', null, 'Could not load data'), state.error));
       return;
     }
     const games = state.games;
+    const final = state.scope === 'recent';
     if (!games.length) {
       const s = state.status;
       view.append(h('div', { class: 'empty' },
-        h('strong', null, state.scope === 'upcoming' ? 'ยังไม่มีแมตช์ที่รอแข่ง' : 'ยังไม่มีแมตช์ที่แข่งแล้วใน 10 วันล่าสุด'),
+        h('strong', null, final ? 'No finished games in the last 10 days' : 'No upcoming games with odds yet'),
         s && !s.hasKey && !s.demo
-          ? 'ตั้งค่า ODDS_API_KEY ในไฟล์ .env แล้วเริ่มเซิร์ฟเวอร์ใหม่ ระบบจะดึงราคาให้อัตโนมัติ'
-          : 'ระบบจะเพิ่มแมตช์ให้เองเมื่อเจ้ามือเปิดราคา ช่วงปิดฤดูกาลอาจไม่มีราคา'));
+          ? 'Add ODDS_API_KEY and the tracker will start fetching odds automatically.'
+          : 'Games appear here as soon as bookmakers post lines. The off-season may have none.'));
       return;
     }
-    const groups = new Map();
+
+    const cols = final ? 14 : 11;
+    const thead = h('thead', null,
+      h('tr', { class: 'grp' },
+        h('th', { rowspan: '2', class: 'sticky game-h', scope: 'col' }, 'Game'),
+        h('th', { colspan: '5', class: 'g', scope: 'colgroup' }, 'Spread'),
+        h('th', { colspan: '5', class: 'g', scope: 'colgroup' }, 'Total points'),
+        final ? h('th', { colspan: '3', class: 'g', scope: 'colgroup' }, 'Result') : null),
+      h('tr', null,
+        h('th', { class: 'gs' }, 'Open'), h('th', null, final ? 'Close' : 'Now'), h('th', { class: 'mvh' }, 'Move'),
+        h('th', { title: 'Odds on the home team at the spread' }, 'Home odds'), h('th', { title: 'Odds on the away team at the spread' }, 'Away odds'),
+        h('th', { class: 'gs' }, 'Open'), h('th', null, final ? 'Close' : 'Now'), h('th', { class: 'mvh' }, 'Move'),
+        h('th', null, 'Over odds'), h('th', null, 'Under odds'),
+        final ? [h('th', { class: 'gs' }, 'Score'), h('th', null, 'ATS'), h('th', null, 'O/U')] : null));
+
+    const tbody = h('tbody');
+    let lastDay = null;
     for (const g of games) {
       const d = new Date(g.commence);
-      const k = T.dayKey.format(d);
-      if (!groups.has(k)) groups.set(k, { label: T.day.format(d), items: [] });
-      groups.get(k).items.push(g);
-    }
-    const board = h('div', { class: 'board' });
-    for (const grp of groups.values()) {
-      const list = h('div', { class: 'day-list' });
-      for (const g of grp.items) {
-        const d = new Date(g.commence);
-        const res = verdict(g, g.spreads?.now.line, g.totals?.now.line);
-        list.append(h('button', { type: 'button', class: 'row', onclick: () => openGame(g.id) },
-          h('span', { class: 'time' }, T.time.format(d)),
-          h('span', { class: 'matchup' }, ab(g.away), h('span', { class: 'at' }, '@'), ab(g.home),
-            timeNote(g) ? h('small', { class: 'when' }, timeNote(g)) : null),
-          h('span', { class: 'mkts' },
-            mktRow('แฮนดิแคป', g.spreads, g, 'spreads'),
-            mktRow('สูง/ต่ำ', g.totals, g, 'totals')),
-          g.score ? h('span', { class: 'result' },
-            h('b', null, `${ab(g.away)} ${g.score.away} – ${g.score.home} ${ab(g.home)}`),
-            res && res.length ? ` · ${res.join(' · ')}` : (g.score.completed ? '' : ' · กำลังแข่ง')) : null));
+      const key = T.dayKey.format(d);
+      if (key !== lastDay) {
+        lastDay = key;
+        tbody.append(h('tr', { class: 'day' }, h('th', { colspan: String(cols), scope: 'rowgroup' },
+          h('span', null, T.day.format(d)))));
       }
-      board.append(h('section', { class: 'day' }, h('h2', null, grp.label), list));
+      const sp = g.spreads;
+      const tt = g.totals;
+      const v = verdict(g, sp?.now.line, tt?.now.line);
+      const soon = Date.parse(g.commence) - Date.now();
+      let note = null;
+      if (soon > 0 && soon < 24 * 3600_000) note = rel(g.commence);
+      else if (soon <= 0 && !g.score?.completed) note = g.score ? 'Live' : (soon < -4 * 3600_000 ? 'Result pending' : 'Started');
+      const open = () => openGame(g.id);
+      tbody.append(h('tr', { class: 'game', onclick: open },
+        h('td', { class: 'sticky game-c' },
+          h('button', { type: 'button', class: 'match', title: `${g.away} at ${g.home}`, onclick: (e) => { e.stopPropagation(); open(); } },
+            ab(g.away), h('span', { class: 'at' }, ' @ '), ab(g.home)),
+          h('span', { class: 'tip' }, T.time.format(d), note ? ` · ${note}` : '')),
+        cell(sp ? spreadText(sp.open.line, g) : null, 'gs'),
+        cell(sp ? spreadText(sp.now.line, g) : null, 'now'),
+        moveCell(sp ? spreadMove(sp.delta, g) : null, '→ '),
+        cell(sp ? fmtOdds(sp.now.a) : null),
+        cell(sp ? fmtOdds(sp.now.b) : null),
+        cell(tt ? num(tt.open.line) : null, 'gs'),
+        cell(tt ? num(tt.now.line) : null, 'now'),
+        moveCell(tt ? totalMove(tt.delta) : null, ''),
+        cell(tt ? fmtOdds(tt.now.a) : null),
+        cell(tt ? fmtOdds(tt.now.b) : null),
+        final ? [
+          cell(g.score ? `${g.score.away}–${g.score.home}` : null, 'gs'),
+          cell(v?.ats ?? null),
+          cell(v?.ou ?? null),
+        ] : null));
     }
-    view.append(board);
+
+    view.append(
+      h('div', { class: 'table-wrap board-wrap' }, h('table', { class: 'board' }, thead, tbody)),
+      h('p', { class: 'legend' },
+        'Spread is shown from the favourite (BOS -5.5 = Boston gives 5.5 points). ',
+        'Spread move = how far the line shifted since it opened, toward the team named. Total move = change in points (+ means the total went up). ',
+        `Odds are the latest prices in ${FMT_NAME[state.fmt]} format. Click a game for its full price history.`,
+        h('span', { class: 'swipe' }, ' Swipe the table sideways to see every column.')));
   }
 
-  // ---------- หน้าแมตช์ ----------
+  // ---------- game page ----------
   function destroyCharts() {
     for (const c of state.charts) c.destroy();
     state.charts = [];
+  }
+
+  /** Merge spread and total series into one timeline, carrying values forward. */
+  function mergeHistory(sp, tt) {
+    const times = [...new Set([...sp.map((p) => p.t), ...tt.map((p) => p.t)])].sort();
+    const rows = [];
+    let i = 0; let j = 0; let s = null; let t = null;
+    for (const time of times) {
+      while (i < sp.length && sp[i].t <= time) s = sp[i++];
+      while (j < tt.length && tt[j].t <= time) t = tt[j++];
+      rows.push({ t: time, s, tt: t });
+    }
+    return rows;
   }
 
   const crosshair = {
@@ -343,13 +353,12 @@
       ctx.font = `500 11px ${cssVar('--f-body')}`;
       ctx.textAlign = 'right';
       ctx.textBaseline = 'bottom';
-      ctx.fillText(opts.label || 'เริ่มแข่ง', x, top - 3);
+      ctx.fillText('Tip-off', x, top - 3);
       ctx.restore();
     },
   };
 
-  function baseOptions(x0, x1, tipX, yFmt, tooltipLabel) {
-    const grid = cssVar('--line');
+  function chartOptions(x0, x1, tipX, yFmt, label) {
     const muted = cssVar('--muted');
     return {
       animation: false,
@@ -362,12 +371,11 @@
           type: 'linear', min: x0, max: x1,
           grid: { display: false },
           border: { color: cssVar('--line-strong') },
-          ticks: { color: muted, maxTicksLimit: 4, maxRotation: 0, font: { size: 10 },
-            callback: (v) => T.short.format(new Date(v)) },
+          ticks: { color: muted, maxTicksLimit: 4, maxRotation: 0, font: { size: 10 }, callback: (v) => T.stamp.format(new Date(v)) },
         },
         y: {
           grace: '8%',
-          grid: { color: grid, drawTicks: false },
+          grid: { color: cssVar('--line'), drawTicks: false },
           border: { display: false },
           ticks: { color: muted, font: { size: 10 }, padding: 6, maxTicksLimit: 5, callback: yFmt },
         },
@@ -385,147 +393,179 @@
           boxWidth: 12, boxHeight: 2,
           titleFont: { weight: '500', size: 11 },
           bodyFont: { weight: '600', size: 12 },
-          callbacks: { title: (items) => T.short.format(new Date(items[0].parsed.x)), label: tooltipLabel },
+          callbacks: { title: (items) => T.stamp.format(new Date(items[0].parsed.x)), label },
         },
       },
     };
   }
-
   function stepData(points, endX, pick) {
     const out = points.map((p) => ({ x: Date.parse(p.t), y: pick(p) }));
     if (out.length && endX > out[out.length - 1].x) out.push({ x: endX, y: out[out.length - 1].y });
     return out;
   }
-  const ds = (label, data, color) => ({
-    label, data, borderColor: color, backgroundColor: color,
+  const ds = (label, dataPts, color) => ({
+    label, data: dataPts, borderColor: color, backgroundColor: color,
     borderWidth: 2, stepped: 'after', pointRadius: 0, pointHoverRadius: 4,
     pointHoverBorderWidth: 2, pointHoverBorderColor: cssVar('--surface'),
   });
 
-  function marketBlock(g, kind, points) {
-    const isSp = kind === 'spreads';
-    const title = isSp ? 'แฮนดิแคป' : 'สูง/ต่ำ (คะแนนรวม)';
-    const sec = h('section', { class: 'market', 'aria-label': title }, h('h3', null, title));
-    if (!points.length) {
-      sec.append(h('p', { class: 'no-chart' }, 'เจ้ามือนี้ยังไม่มีราคาตลาดนี้'));
-      return { sec, draw: () => {} };
-    }
-    const started = Date.now() >= Date.parse(g.commence);
-    const open = points[0];
-    const last = points[points.length - 1];
+  function chartCard(title, keys, height) {
+    const canvas = h('canvas', { role: 'img', 'aria-label': title });
+    const card = h('figure', { class: 'chart' },
+      h('figcaption', null, h('span', { class: 'ttl' }, title),
+        keys.map(([name, color]) => h('span', { class: 'key' }, h('i', { style: `background:var(${color})` }), name))),
+      h('div', { class: `chart-box ${height}` }, canvas));
+    return { card, canvas };
+  }
+
+  function summaryRow(label, pts, g, isSp) {
+    if (!pts.length) return h('tr', null, h('th', { scope: 'row' }, label), h('td', { colspan: '4', class: 'muted' }, 'No odds from this bookmaker'));
+    const o = pts[0];
+    const n = pts[pts.length - 1];
     const lineTxt = (l) => (isSp ? spreadText(l, g) : num(l));
-    const aName = isSp ? ab(g.home) : 'สูง';
-    const bName = isSp ? ab(g.away) : 'ต่ำ';
-    const delta = Math.round((last.line - open.line) * 100) / 100;
+    const odds = (p) => (isSp ? `${ab(g.home)} ${fmtOdds(p.a)} · ${ab(g.away)} ${fmtOdds(p.b)}` : `O ${fmtOdds(p.a)} · U ${fmtOdds(p.b)}`);
+    const delta = Math.round((n.line - o.line) * 100) / 100;
     const mv = isSp ? spreadMove(delta, g) : totalMove(delta);
-    const lineMoves = points.reduce((n, p, i) => n + (i && p.line !== points[i - 1].line ? 1 : 0), 0);
-
-    if (isSp) sec.append(h('p', { class: 'hint' }, `กราฟแสดงแต้มต่อของ ${ab(g.home)} (เจ้าบ้าน) ค่าติดลบ = ${ab(g.home)} เป็นฝ่ายต่อ`));
-    sec.append(h('dl', { class: 'facts' },
-      h('div', null, h('dt', null, 'ราคาเปิด'), h('dd', null, lineTxt(open.line),
-        h('small', null, `${aName} ${fmtOdds(open.a)} · ${bName} ${fmtOdds(open.b)}`))),
-      h('div', null, h('dt', null, started ? 'ราคาปิด' : 'ล่าสุด'), h('dd', null, lineTxt(last.line),
-        h('small', null, `${aName} ${fmtOdds(last.a)} · ${bName} ${fmtOdds(last.b)}`))),
-      h('div', null, h('dt', null, 'การขยับ'), h('dd', null, mv || 'คงที่',
-        h('small', null, `เส้นเปลี่ยน ${lineMoves} ครั้ง · ค่าน้ำ ${points.length - 1} ครั้ง`)))));
-
-    const lineCanvas = h('canvas', { role: 'img', 'aria-label': `กราฟเส้น${title}ตามเวลา` });
-    const priceCanvas = h('canvas', { role: 'img', 'aria-label': `กราฟค่าน้ำ${title}ตามเวลา` });
-    const fmtLabel = state.fmt === 'eu' ? 'ยุโรป' : 'ฮ่องกง';
-    sec.append(
-      h('div', { class: 'chart-label' }, h('span', { class: 'ttl' }, isSp ? 'เส้นต่อ' : 'เส้นคะแนนรวม')),
-      h('div', { class: 'chart-box tall' }, lineCanvas),
-      h('div', { class: 'chart-label' },
-        h('span', { class: 'ttl' }, `ค่าน้ำ (${fmtLabel})`),
-        h('span', { class: 'key' }, h('i', { style: 'background:var(--s1)' }), aName),
-        h('span', { class: 'key' }, h('i', { style: 'background:var(--s2)' }), bName)),
-      h('div', { class: 'chart-box short' }, priceCanvas));
-
-    // ตารางประวัติ (ใหม่สุดก่อน)
-    const tbody = h('tbody');
-    for (let i = points.length - 1; i >= 0; i--) {
-      const p = points[i];
-      const moved = i > 0 && p.line !== points[i - 1].line;
-      tbody.append(h('tr', { class: moved ? 'moved' : null },
-        h('td', null, T.short.format(new Date(p.t))),
-        h('td', { class: 'ln' }, isSp ? num(p.line) : num(p.line)),
-        h('td', null, fmtOdds(p.a)), h('td', null, fmtOdds(p.b))));
-    }
-    sec.append(h('details', { class: 'log' },
-      h('summary', null, `ตารางราคาทั้งหมด (${points.length} รายการ)`),
-      h('div', { class: 'table-wrap' }, h('table', null,
-        h('thead', null, h('tr', null, h('th', null, 'เวลา'), h('th', null, isSp ? `แต้ม ${ab(g.home)}` : 'เส้น'),
-          h('th', null, aName), h('th', null, bName))),
-        tbody))));
-
-    const draw = () => {
-      if (!window.Chart) {
-        lineCanvas.parentElement.replaceWith(h('p', { class: 'no-chart' }, 'โหลดไลบรารีกราฟไม่ได้ ดูตัวเลขในตารางด้านล่าง'));
-        priceCanvas.parentElement.remove();
-        return;
-      }
-      const tip = Date.parse(g.commence);
-      const x0 = Date.parse(open.t);
-      const endX = Math.max(Math.min(Date.now(), tip), Date.parse(last.t));
-      const s1 = cssVar('--s1'); const s2 = cssVar('--s2');
-      const ink = cssVar('--s1');
-      state.charts.push(new window.Chart(lineCanvas, {
-        type: 'line',
-        data: { datasets: [ds(isSp ? 'เส้นต่อ' : 'เส้น', stepData(points, endX, (p) => p.line), ink)] },
-        options: baseOptions(x0, endX, tip, (v) => num(v), (c) => ` ${lineTxt(c.parsed.y)}`),
-        plugins: [crosshair, tipLine],
-      }));
-      const oddsFmt = (v) => (state.fmt === 'eu' ? v.toFixed(2) : v.toFixed(2));
-      state.charts.push(new window.Chart(priceCanvas, {
-        type: 'line',
-        data: { datasets: [
-          ds(aName, stepData(points, endX, (p) => chartOdds(p.a)), s1),
-          ds(bName, stepData(points, endX, (p) => chartOdds(p.b)), s2),
-        ] },
-        options: baseOptions(x0, endX, tip, oddsFmt, (c) => ` ${oddsFmt(c.parsed.y)}  ${c.dataset.label}`),
-        plugins: [crosshair, tipLine],
-      }));
-    };
-    return { sec, draw };
+    const changes = pts.reduce((c, p, i) => c + (i && p.line !== pts[i - 1].line ? 1 : 0), 0);
+    return h('tr', null,
+      h('th', { scope: 'row' }, label),
+      h('td', null, h('b', null, lineTxt(o.line)), h('small', null, odds(o))),
+      h('td', null, h('b', null, lineTxt(n.line)), h('small', null, odds(n))),
+      h('td', { class: mv ? 'mv' : 'mv flat' }, mv ? (isSp ? `→ ${mv}` : mv) : '—'),
+      h('td', null, String(changes)));
   }
 
   function renderSheet() {
     const view = $('#view');
     destroyCharts();
     view.replaceChildren();
-    const back = h('button', { type: 'button', class: 'back', onclick: closeGame }, '← รายการแมตช์');
+    const back = h('button', { type: 'button', class: 'back', onclick: closeGame }, '← All games');
     const g = state.detail;
     if (!g) {
-      view.append(h('div', { class: 'sheet' }, back, h('div', { class: 'empty' }, h('strong', null, 'ไม่พบแมตช์นี้'), 'อาจถูกลบหรือยังไม่ได้ดึงข้อมูล')));
+      view.append(h('div', { class: 'sheet' }, back, h('div', { class: 'empty' }, h('strong', null, 'Game not found'), 'It may have been removed or not fetched yet.')));
       return;
     }
     const tip = Date.parse(g.commence);
     const started = Date.now() >= tip;
-    const sp = g.series.spreads; const tt = g.series.totals;
-    const res = verdict(g, sp.length ? sp[sp.length - 1].line : null, tt.length ? tt[tt.length - 1].line : null);
-    const bookTitle = state.book === CONSENSUS ? 'ค่ากลางตลาด (มัธยฐานทุกเจ้า)'
+    const sp = g.series.spreads;
+    const tt = g.series.totals;
+    const v = verdict(g, sp.length ? sp[sp.length - 1].line : null, tt.length ? tt[tt.length - 1].line : null);
+    const bookTitle = state.book === CONSENSUS ? 'Market consensus (median of all bookmakers)'
       : (g.books.find((b) => b.key === state.book)?.title ?? state.book);
 
+    // header
     const head = h('header', { class: 'sheet-head' },
-      h('h2', null, ab(g.away), h('span', { class: 'at' }, '@'), ab(g.home)),
-      h('div', { class: 'teams' }, `${g.away} (เยือน) พบ ${g.home} (เหย้า)`),
-      h('div', { class: 'tip' },
-        h('span', null, `${T.day.format(new Date(tip))} ${T.time.format(new Date(tip))}`),
-        started
-          ? h('span', { class: 'pill' }, g.score?.completed ? 'จบเกม' : 'เริ่มแข่งแล้ว')
-          : h('span', { class: 'pill live' }, `เริ่ม${rel(g.commence)}`),
-        g.score ? h('b', null, `${ab(g.away)} ${g.score.away} – ${g.score.home} ${ab(g.home)}`) : null,
-        res && res.length ? h('span', null, res.join(' · ')) : null),
-      h('div', { class: 'teams' }, `ราคาจาก ${bookTitle}`));
+      h('h2', null, ab(g.away), h('span', { class: 'at' }, ' @ '), ab(g.home)),
+      h('p', { class: 'teams' }, `${g.away} at ${g.home}`),
+      h('p', { class: 'tip' },
+        h('span', null, `${T.day.format(new Date(tip))}, ${T.time.format(new Date(tip))}`),
+        started ? h('span', { class: 'pill' }, g.score?.completed ? 'Final' : 'Started')
+          : h('span', { class: 'pill live' }, `Tip-off ${rel(g.commence)}`)),
+      v ? h('p', { class: 'result' }, h('b', null, v.score), [v.ats, v.ou].filter(Boolean).map((x) => ` · ${x}`).join('')) : null,
+      h('p', { class: 'teams' }, `Prices from ${bookTitle}`));
 
-    const a = marketBlock(g, 'spreads', sp);
-    const b = marketBlock(g, 'totals', tt);
-    view.append(h('div', { class: 'sheet' }, back, head, a.sec, b.sec));
-    a.draw(); b.draw();
-    window.scrollTo({ top: 0 });
+    // summary
+    const closeLbl = started ? 'Close' : 'Now';
+    const summary = h('section', { class: 'block' },
+      h('h3', null, 'Summary'),
+      h('div', { class: 'table-wrap narrow' }, h('table', { class: 'summary' },
+        h('thead', null, h('tr', null, h('th', null, ''), h('th', null, 'Open'), h('th', null, closeLbl), h('th', { class: 'mvh' }, 'Move'), h('th', null, 'Line changes'))),
+        h('tbody', null, summaryRow('Spread', sp, g, true), summaryRow('Total', tt, g, false)))));
+
+    // bookmakers
+    let books = null;
+    const rowsByBook = g.byBook ?? [];
+    if (rowsByBook.length) {
+      const tb = h('tbody');
+      for (const b of rowsByBook) {
+        const s = b.spreads; const t = b.totals;
+        const lastT = [s?.t, t?.t].filter(Boolean).sort().pop();
+        tb.append(h('tr', { class: b.key === state.book ? 'sel' : null },
+          h('th', { scope: 'row' }, b.title),
+          cell(s ? spreadText(s.line, g) : null, 'now'), cell(s ? fmtOdds(s.a) : null), cell(s ? fmtOdds(s.b) : null),
+          cell(t ? num(t.line) : null, 'now gs'), cell(t ? fmtOdds(t.a) : null), cell(t ? fmtOdds(t.b) : null),
+          cell(lastT ? T.stamp.format(new Date(lastT)) : null, 'muted gs')));
+      }
+      books = h('section', { class: 'block' },
+        h('h3', null, started ? 'Closing line by bookmaker' : 'Current line by bookmaker'),
+        h('div', { class: 'table-wrap' }, h('table', { class: 'books' },
+          h('thead', null, h('tr', null, h('th', null, 'Bookmaker'), h('th', null, 'Spread'), h('th', null, `${ab(g.home)} odds`), h('th', null, `${ab(g.away)} odds`),
+            h('th', { class: 'gs' }, 'Total'), h('th', null, 'Over odds'), h('th', null, 'Under odds'), h('th', { class: 'gs' }, 'Last change'))),
+          tb)));
+    }
+
+    // history
+    const hist = mergeHistory(sp, tt);
+    const LIMIT = 40;
+    const tbh = h('tbody');
+    const shown = state.showAll ? hist.length : Math.min(LIMIT, hist.length);
+    for (let k = hist.length - 1; k >= hist.length - shown; k--) {
+      const r = hist[k];
+      const p = k > 0 ? hist[k - 1] : null;
+      const lineMoved = (a, b) => (p && a && b && a.line !== b.line ? 'chg' : null);
+      tbh.append(h('tr', null,
+        h('td', { class: 'muted' }, T.stamp.format(new Date(r.t))),
+        h('td', { class: ['now', lineMoved(r.s, p?.s)].filter(Boolean).join(' ') }, r.s ? spreadText(r.s.line, g) : '–'),
+        h('td', null, r.s ? fmtOdds(r.s.a) : '–'),
+        h('td', null, r.s ? fmtOdds(r.s.b) : '–'),
+        h('td', { class: ['now', 'gs', lineMoved(r.tt, p?.tt)].filter(Boolean).join(' ') }, r.tt ? num(r.tt.line) : '–'),
+        h('td', null, r.tt ? fmtOdds(r.tt.a) : '–'),
+        h('td', null, r.tt ? fmtOdds(r.tt.b) : '–')));
+    }
+    const history = h('section', { class: 'block' },
+      h('h3', null, 'Price history'),
+      h('p', { class: 'legend' }, `Newest first. A highlighted line moved from the row below it. Odds in ${FMT_NAME[state.fmt]} format.`),
+      h('div', { class: 'table-wrap' }, h('table', { class: 'history' },
+        h('thead', null,
+          h('tr', { class: 'grp' }, h('th', { rowspan: '2' }, 'Time'), h('th', { colspan: '3', class: 'g' }, 'Spread'), h('th', { colspan: '3', class: 'g' }, 'Total')),
+          h('tr', null, h('th', null, 'Line'), h('th', null, `${ab(g.home)} odds`), h('th', null, `${ab(g.away)} odds`),
+            h('th', { class: 'gs' }, 'Line'), h('th', null, 'Over odds'), h('th', null, 'Under odds'))),
+        tbh)),
+      hist.length > LIMIT ? h('button', { type: 'button', class: 'more', onclick: () => { state.showAll = !state.showAll; renderSheet(); } },
+        state.showAll ? 'Show latest 40 only' : `Show all ${hist.length} rows`) : null);
+
+    // charts
+    const oddsLbl = chartFmt() === 'hk' ? 'Hong Kong' : 'Decimal';
+    const c1 = chartCard('Spread line (home team points)', [], 'tall');
+    const c2 = chartCard(`Spread odds (${oddsLbl})`, [[ab(g.home), '--s1'], [ab(g.away), '--s2']], 'short');
+    const c3 = chartCard('Total points line', [], 'tall');
+    const c4 = chartCard(`Total odds (${oddsLbl})`, [['Over', '--s1'], ['Under', '--s2']], 'short');
+    const charts = h('section', { class: 'block' },
+      h('h3', null, 'Charts'),
+      h('p', { class: 'legend' }, 'Spread charts plot the home team\'s handicap (below 0 = home favoured). The dashed line marks tip-off. Hover or tap a chart to read exact values.'),
+      h('div', { class: 'chart-grid' }, c1.card, c2.card, c3.card, c4.card));
+
+    view.append(h('div', { class: 'sheet' }, back, head, summary, charts, books, history));
+
+    if (!window.Chart) {
+      charts.replaceChildren(h('h3', null, 'Charts'), h('p', { class: 'muted' }, 'The chart library did not load. All values are in the tables above.'));
+    } else {
+      const draw = (pts, lineCard, oddsCard, lineLabel) => {
+        if (!pts.length) { lineCard.card.remove(); oddsCard.card.remove(); return; }
+        const x0 = Date.parse(pts[0].t);
+        const endX = Math.max(Math.min(Date.now(), tip), Date.parse(pts[pts.length - 1].t));
+        const f2 = (x) => x.toFixed(2);
+        state.charts.push(new window.Chart(lineCard.canvas, {
+          type: 'line',
+          data: { datasets: [ds('Line', stepData(pts, endX, (p) => p.line), cssVar('--s1'))] },
+          options: chartOptions(x0, endX, tip, (x) => signedOrNum(x, lineLabel), (c) => ` ${lineLabel === 'spread' ? spreadText(c.parsed.y, g) : num(c.parsed.y)}`),
+          plugins: [crosshair, tipLine],
+        }));
+        const [na, nb] = lineLabel === 'spread' ? [ab(g.home), ab(g.away)] : ['Over', 'Under'];
+        state.charts.push(new window.Chart(oddsCard.canvas, {
+          type: 'line',
+          data: { datasets: [ds(na, stepData(pts, endX, (p) => chartOdds(p.a)), cssVar('--s1')), ds(nb, stepData(pts, endX, (p) => chartOdds(p.b)), cssVar('--s2'))] },
+          options: chartOptions(x0, endX, tip, f2, (c) => ` ${f2(c.parsed.y)}  ${c.dataset.label}`),
+          plugins: [crosshair, tipLine],
+        }));
+      };
+      draw(sp, c1, c2, 'spread');
+      draw(tt, c3, c4, 'total');
+    }
   }
+  const signedOrNum = (x, kind) => (kind === 'spread' ? signed(x) : num(x));
 
-  // ---------- การนำทาง ----------
+  // ---------- navigation ----------
   function render() {
     renderStatus();
     renderFilters();
@@ -549,8 +589,9 @@
 
   function openGame(id) {
     state.gameId = id;
+    state.showAll = false;
     if (!STATIC && location.hash !== `#game-${id}`) location.hash = `game-${id}`;
-    refresh();
+    refresh().then(() => window.scrollTo({ top: 0 }));
   }
   function closeGame() {
     state.gameId = null;
@@ -559,7 +600,7 @@
     refresh();
   }
 
-  // ---------- เริ่มต้น ----------
+  // ---------- start ----------
   for (const b of document.querySelectorAll('#scopeTabs button')) {
     b.addEventListener('click', () => { state.scope = b.dataset.scope; refresh(); });
   }
@@ -579,13 +620,10 @@
     setInterval(() => { if (document.visibilityState === 'visible') refresh(); }, 60_000);
   }
 
-  // วาดกราฟใหม่เมื่อเปลี่ยนธีม
   const redrawTheme = () => { if (state.gameId) renderSheet(); };
   window.matchMedia?.('(prefers-color-scheme: dark)')?.addEventListener?.('change', redrawTheme);
   new MutationObserver(redrawTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
-  if (window.Chart) {
-    window.Chart.defaults.font.family = cssVar('--f-body') || 'system-ui, sans-serif';
-  }
+  if (window.Chart) window.Chart.defaults.font.family = cssVar('--f-body') || 'system-ui, sans-serif';
   refresh();
 })();

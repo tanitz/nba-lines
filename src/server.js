@@ -72,13 +72,13 @@ const server = http.createServer(async (req, res) => {
     const m = p.match(/^\/api\/games\/([^/]+)$/);
     if (req.method === 'GET' && m) {
       const g = gameDetail(db, decodeURIComponent(m[1]), book);
-      return g ? send(res, 200, g) : send(res, 404, { error: 'ไม่พบแมตช์' });
+      return g ? send(res, 200, g) : send(res, 404, { error: 'Game not found' });
     }
     if (req.method === 'POST' && p === '/api/poll') {
       if (!config.adminToken || req.headers['x-admin-token'] !== config.adminToken) {
-        return send(res, 403, { error: 'รหัสไม่ถูกต้อง' });
+        return send(res, 403, { error: 'Wrong admin token' });
       }
-      if (config.demo) return send(res, 400, { error: 'โหมดตัวอย่างไม่ดึงราคาจริง' });
+      if (config.demo) return send(res, 400, { error: 'Demo mode does not fetch real odds' });
       return send(res, 200, await poller.pollOdds());
     }
     if (req.method === 'GET' && !p.startsWith('/api/')) return serveStatic(req, res, p);

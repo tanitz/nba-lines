@@ -118,7 +118,23 @@ export function gameDetail(db, id, book = CONSENSUS) {
     FROM snapshots s LEFT JOIN bookmakers b ON b.key = s.bookmaker
     WHERE s.game_id = ? GROUP BY s.bookmaker ORDER BY b.title
   `).all(id);
-  return { ...gameRow(g), book, books, series };
+
+  // ราคาล่าสุดของทุกเจ้ามือ (ตารางเทียบเจ้ามือ)
+  const latest = db.prepare(`
+    SELECT s.bookmaker, s.market, s.at, s.line, s.price_a, s.price_b FROM snapshots s
+    WHERE s.game_id = ? AND s.id = (
+      SELECT s2.id FROM snapshots s2
+      WHERE s2.game_id = s.game_id AND s2.bookmaker = s.bookmaker AND s2.market = s.market
+      ORDER BY s2.at DESC, s2.id DESC LIMIT 1)
+  `).all(id);
+  const byBook = books.map((b) => {
+    const pick = (m) => {
+      const r = latest.find((x) => x.bookmaker === b.key && x.market === m);
+      return r ? { t: r.at, line: r.line, a: r.price_a, b: r.price_b } : null;
+    };
+    return { key: b.key, title: b.title, spreads: pick('spreads'), totals: pick('totals') };
+  });
+  return { ...gameRow(g), book, books, byBook, series };
 }
 
 export function listBookmakers(db) {

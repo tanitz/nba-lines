@@ -63,6 +63,9 @@ test('poller stores only changes and respects interval', async () => {
   const d = gameDetail(db, 'g1', 'pinnacle');
   assert.deepEqual(d.series.spreads.map((x) => x.line), [-5.5, -6]);
   assert.deepEqual(d.series.totals.map((x) => x.line), [221.5, 222]);
+  assert.equal(d.byBook[0].title, 'Pinnacle');
+  assert.equal(d.byBook[0].spreads.line, -6);
+  assert.equal(d.byBook[0].totals.line, 222);
   const list = listGames(db, { now, book: 'consensus' });
   assert.equal(list[0].spreads.delta, -0.5);
   // ใกล้เวลาแข่ง (< 1 ชม.) ต้องดึงถี่ขึ้น
