@@ -63,18 +63,31 @@
     if (line === 0) return 'PK';
     return line < 0 ? `${ab(g.home)} -${num(-line)}` : `${ab(g.away)} -${num(line)}`;
   };
-  /** A negative change in the home line means the market moved toward the home team. */
-  const spreadMove = (delta, g) => {
-    if (!delta) return null;
-    return delta < 0 ? `${ab(g.home)} ${num(-delta)}` : `${ab(g.away)} ${num(delta)}`;
-  };
-  const totalMove = (delta) => (!delta ? null : signed(delta));
+  /** Home handicap falling means the market moved toward the home team. */
+  const spreadToward = (delta, g) => (delta < 0 ? ab(g.home) : ab(g.away));
+
+  // ---------- change colours: green = went up, red = went down ----------
+  const EPS = 1e-9;
+  const dirOf = (delta) => (delta > EPS ? 'up' : delta < -EPS ? 'down' : null);
+
+  /** Table cell. opts: cls, dir ('up'|'down' tints it), arrow (draw ▲/▼), sub (small second line), title. */
+  function td(text, o = {}) {
+    const cls = [o.cls, o.dir].filter(Boolean).join(' ');
+    const shown = text ?? '–';
+    return h('td', { class: cls || null, title: o.title || null },
+      o.arrow && o.dir ? h('span', { class: 'v' }, shown) : shown,
+      o.sub ? h('small', null, o.sub) : null);
+  }
+  const changeKey = (since) => h('p', { class: 'chg-key' },
+    h('span', { class: 'lead' }, `Colour shows change ${since}:`),
+    h('span', { class: 'chip up' }, h('i'), 'Went up'),
+    h('span', { class: 'chip down' }, h('i'), 'Went down'),
+    h('span', { class: 'chip' }, 'No change'));
 
   // ---------- dates ----------
   const T = {
     time: new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false }),
     day: new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'long' }),
-    dayShort: new Intl.DateTimeFormat('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }),
     dayKey: new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit' }),
     stamp: new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }),
   };
@@ -216,8 +229,28 @@
   }
 
   // ---------- board (game list as a table) ----------
-  const cell = (v, cls) => h('td', { class: cls || null }, v ?? '–');
-  const moveCell = (txt, arrow) => h('td', { class: txt ? 'mv' : 'mv flat' }, txt ? `${arrow}${txt}` : '—');
+  /** Line movement cell (spread or total): arrow + size of the move since open. */
+  function moveCell(s, g, kind) {
+    if (!s) return td(null, { cls: 'flat mvc' });
+    const dir = dirOf(s.delta);
+    if (!dir) return td('—', { cls: 'flat mvc' });
+    const mag = num(Math.abs(s.delta));
+    if (kind === 'spreads') {
+      const team = spreadToward(s.delta, g);
+      return td(mag, { cls: 'mvc', dir, arrow: true, sub: `toward ${team}`, title: `Line moved ${mag} toward ${team}` });
+    }
+    return td(mag, { cls: 'mvc', dir, arrow: true, sub: dir === 'up' ? 'higher' : 'lower', title: `Total went ${dir === 'up' ? 'up' : 'down'} by ${mag}` });
+  }
+  /** Odds cell: latest price, coloured by its change since open. */
+  function oddsCell(nowD, openD) {
+    if (nowD == null) return td(null);
+    const dir = dirOf(nowD - openD);
+    return td(fmtOdds(nowD), {
+      dir, arrow: true,
+      sub: dir ? `open ${fmtOdds(openD)}` : null,
+      title: dir ? `Open ${fmtOdds(openD)} → now ${fmtOdds(nowD)}` : null,
+    });
+  }
 
   function renderBoard() {
     const view = $('#view');
@@ -247,9 +280,10 @@
         final ? h('th', { colspan: '3', class: 'g', scope: 'colgroup' }, 'Result') : null),
       h('tr', null,
         h('th', { class: 'gs' }, 'Open'), h('th', null, final ? 'Close' : 'Now'), h('th', { class: 'mvh' }, 'Move'),
-        h('th', { title: 'Odds on the home team at the spread' }, 'Home odds'), h('th', { title: 'Odds on the away team at the spread' }, 'Away odds'),
+        h('th', { class: 's1', title: 'Odds on the home team at the spread' }, 'Home odds'),
+        h('th', { class: 's2', title: 'Odds on the away team at the spread' }, 'Away odds'),
         h('th', { class: 'gs' }, 'Open'), h('th', null, final ? 'Close' : 'Now'), h('th', { class: 'mvh' }, 'Move'),
-        h('th', null, 'Over odds'), h('th', null, 'Under odds'),
+        h('th', { class: 's1' }, 'Over odds'), h('th', { class: 's2' }, 'Under odds'),
         final ? [h('th', { class: 'gs' }, 'Score'), h('th', null, 'ATS'), h('th', null, 'O/U')] : null));
 
     const tbody = h('tbody');
@@ -275,29 +309,30 @@
           h('button', { type: 'button', class: 'match', title: `${g.away} at ${g.home}`, onclick: (e) => { e.stopPropagation(); open(); } },
             ab(g.away), h('span', { class: 'at' }, ' @ '), ab(g.home)),
           h('span', { class: 'tip' }, T.time.format(d), note ? ` · ${note}` : '')),
-        cell(sp ? spreadText(sp.open.line, g) : null, 'gs'),
-        cell(sp ? spreadText(sp.now.line, g) : null, 'now'),
-        moveCell(sp ? spreadMove(sp.delta, g) : null, '→ '),
-        cell(sp ? fmtOdds(sp.now.a) : null),
-        cell(sp ? fmtOdds(sp.now.b) : null),
-        cell(tt ? num(tt.open.line) : null, 'gs'),
-        cell(tt ? num(tt.now.line) : null, 'now'),
-        moveCell(tt ? totalMove(tt.delta) : null, ''),
-        cell(tt ? fmtOdds(tt.now.a) : null),
-        cell(tt ? fmtOdds(tt.now.b) : null),
+        td(sp ? spreadText(sp.open.line, g) : null, { cls: 'gs' }),
+        td(sp ? spreadText(sp.now.line, g) : null, { cls: 'now', dir: sp ? dirOf(sp.delta) : null }),
+        moveCell(sp, g, 'spreads'),
+        oddsCell(sp?.now.a, sp?.open.a),
+        oddsCell(sp?.now.b, sp?.open.b),
+        td(tt ? num(tt.open.line) : null, { cls: 'gs' }),
+        td(tt ? num(tt.now.line) : null, { cls: 'now', dir: tt ? dirOf(tt.delta) : null }),
+        moveCell(tt, g, 'totals'),
+        oddsCell(tt?.now.a, tt?.open.a),
+        oddsCell(tt?.now.b, tt?.open.b),
         final ? [
-          cell(g.score ? `${g.score.away}–${g.score.home}` : null, 'gs'),
-          cell(v?.ats ?? null),
-          cell(v?.ou ?? null),
+          td(g.score ? `${g.score.away}–${g.score.home}` : null, { cls: 'gs' }),
+          td(v?.ats ?? null),
+          td(v?.ou ?? null),
         ] : null));
     }
 
     view.append(
+      changeKey(final ? 'between the opening and closing price' : 'between the opening price and now'),
       h('div', { class: 'table-wrap board-wrap' }, h('table', { class: 'board' }, thead, tbody)),
       h('p', { class: 'legend' },
         'Spread is shown from the favourite (BOS -5.5 = Boston gives 5.5 points). ',
-        'Spread move = how far the line shifted since it opened, toward the team named. Total move = change in points (+ means the total went up). ',
-        `Odds are the latest prices in ${FMT_NAME[state.fmt]} format. Click a game for its full price history.`,
+        'Spread move: the line shifted toward the team named; ▲/▼ follow the home team\'s handicap number. Total move: change in points. ',
+        `Odds are the latest prices in ${FMT_NAME[state.fmt]} format with the opening price underneath. Click a game for its charts and full price history.`,
         h('span', { class: 'swipe' }, ' Swipe the table sideways to see every column.')));
   }
 
@@ -350,7 +385,7 @@
       ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, bottom); ctx.stroke();
       ctx.setLineDash([]);
       ctx.fillStyle = cssVar('--ink-2');
-      ctx.font = `500 11px ${cssVar('--f-body')}`;
+      ctx.font = `600 11px ${cssVar('--f-body')}`;
       ctx.textAlign = 'right';
       ctx.textBaseline = 'bottom';
       ctx.fillText('Tip-off', x, top - 3);
@@ -390,10 +425,14 @@
           borderColor: cssVar('--line-strong'),
           borderWidth: 1,
           padding: 8,
-          boxWidth: 12, boxHeight: 2,
+          boxWidth: 12, boxHeight: 3,
           titleFont: { weight: '500', size: 11 },
           bodyFont: { weight: '600', size: 12 },
-          callbacks: { title: (items) => T.stamp.format(new Date(items[0].parsed.x)), label },
+          callbacks: {
+            title: (items) => T.stamp.format(new Date(items[0].parsed.x)),
+            label,
+            labelColor: (c) => ({ borderColor: c.dataset.borderColor, backgroundColor: c.dataset.borderColor }),
+          },
         },
       },
     };
@@ -403,9 +442,10 @@
     if (out.length && endX > out[out.length - 1].x) out.push({ x: endX, y: out[out.length - 1].y });
     return out;
   }
-  const ds = (label, dataPts, color) => ({
-    label, data: dataPts, borderColor: color, backgroundColor: color,
-    borderWidth: 2, stepped: 'after', pointRadius: 0, pointHoverRadius: 4,
+  const ds = (label, dataPts, color, wash) => ({
+    label, data: dataPts, borderColor: color, backgroundColor: wash || color,
+    fill: wash ? 'start' : false,
+    borderWidth: 2.5, stepped: 'after', pointRadius: 0, pointHoverRadius: 4,
     pointHoverBorderWidth: 2, pointHoverBorderColor: cssVar('--surface'),
   });
 
@@ -418,21 +458,80 @@
     return { card, canvas };
   }
 
-  function summaryRow(label, pts, g, isSp) {
-    if (!pts.length) return h('tr', null, h('th', { scope: 'row' }, label), h('td', { colspan: '4', class: 'muted' }, 'No odds from this bookmaker'));
-    const o = pts[0];
-    const n = pts[pts.length - 1];
-    const lineTxt = (l) => (isSp ? spreadText(l, g) : num(l));
-    const odds = (p) => (isSp ? `${ab(g.home)} ${fmtOdds(p.a)} · ${ab(g.away)} ${fmtOdds(p.b)}` : `O ${fmtOdds(p.a)} · U ${fmtOdds(p.b)}`);
-    const delta = Math.round((n.line - o.line) * 100) / 100;
-    const mv = isSp ? spreadMove(delta, g) : totalMove(delta);
-    const changes = pts.reduce((c, p, i) => c + (i && p.line !== pts[i - 1].line ? 1 : 0), 0);
+  // movement summary -----------------------------------------------------
+  function seriesStats(vals) {
+    const open = vals[0];
+    const now = vals[vals.length - 1];
+    let updates = 0;
+    for (let i = 1; i < vals.length; i++) if (vals[i] !== vals[i - 1]) updates++;
+    return { open, now, delta: now - open, min: Math.min(...vals), max: Math.max(...vals), updates };
+  }
+  /** kind: 'spread' (home handicap line) | 'total' (points line) | 'odds' (decimal price) */
+  function statRow(label, rowCls, vals, fmt, kind, g) {
+    const st = seriesStats(vals);
+    const dir = dirOf(st.delta);
+    let chg;
+    if (!dir) chg = td('—', { cls: 'flat mvc' });
+    else if (kind === 'spread') chg = td(num(Math.abs(st.delta)), { cls: 'mvc', dir, arrow: true, sub: `toward ${spreadToward(st.delta, g)}` });
+    else if (kind === 'total') chg = td(num(Math.abs(st.delta)), { cls: 'mvc', dir, arrow: true });
+    else chg = td(Math.abs(st.delta).toFixed(2), { cls: 'mvc', dir, arrow: true });
     return h('tr', null,
-      h('th', { scope: 'row' }, label),
-      h('td', null, h('b', null, lineTxt(o.line)), h('small', null, odds(o))),
-      h('td', null, h('b', null, lineTxt(n.line)), h('small', null, odds(n))),
-      h('td', { class: mv ? 'mv' : 'mv flat' }, mv ? (isSp ? `→ ${mv}` : mv) : '—'),
-      h('td', null, String(changes)));
+      h('th', { scope: 'row', class: rowCls || null }, label),
+      td(fmt(st.open), { cls: 'val' }),
+      td(fmt(st.now), { cls: 'val', dir }),
+      chg,
+      td(fmt(st.min)), td(fmt(st.max)),
+      td(String(st.updates)));
+  }
+
+  function summaryTable(g, sp, tt, closeLbl) {
+    const grp = (t) => h('tr', { class: 'sub' }, h('th', { colspan: '7', scope: 'rowgroup' }, t));
+    const none = (t) => h('tr', null, h('td', { colspan: '7', class: 'flat' }, t));
+    const rows = [grp('Spread')];
+    if (sp.length) {
+      rows.push(
+        statRow('Handicap line', null, sp.map((p) => p.line), (v) => spreadText(v, g), 'spread', g),
+        statRow(`${ab(g.home)} odds`, 'row-s1', sp.map((p) => p.a), fmtOdds, 'odds', g),
+        statRow(`${ab(g.away)} odds`, 'row-s2', sp.map((p) => p.b), fmtOdds, 'odds', g));
+    } else rows.push(none('No spread prices from this bookmaker yet.'));
+    rows.push(grp('Total points'));
+    if (tt.length) {
+      rows.push(
+        statRow('Points line', null, tt.map((p) => p.line), num, 'total', g),
+        statRow('Over odds', 'row-s1', tt.map((p) => p.a), fmtOdds, 'odds', g),
+        statRow('Under odds', 'row-s2', tt.map((p) => p.b), fmtOdds, 'odds', g));
+    } else rows.push(none('No total prices from this bookmaker yet.'));
+    return h('div', { class: 'table-wrap narrow' }, h('table', { class: 'summary' },
+      h('thead', null, h('tr', null, h('th', null, ''), h('th', null, 'Open'), h('th', null, closeLbl), h('th', { class: 'mvh' }, 'Change'),
+        h('th', { title: 'Lowest value seen' }, 'Min'), h('th', { title: 'Highest value seen' }, 'Max'), h('th', { title: 'Times this value changed' }, 'Updates'))),
+      h('tbody', null, rows)));
+  }
+
+  // bookmaker comparison -------------------------------------------------
+  function booksTable(g, started) {
+    const tb = h('tbody');
+    for (const b of g.byBook ?? []) {
+      const s = b.spreads;
+      const t = b.totals;
+      const lastT = [s?.t, t?.t].filter(Boolean).sort().pop();
+      const lineC = (m, text, extra) => (m ? td(text, { cls: `now ${extra || ''}`.trim(), dir: dirOf(m.line - m.open.line), title: `Open ${m === s ? spreadText(m.open.line, g) : num(m.open.line)}` }) : td(null, { cls: extra }));
+      const oddsC = (m, k) => {
+        if (!m) return td(null);
+        const dir = dirOf(m[k] - m.open[k]);
+        return td(fmtOdds(m[k]), { dir, arrow: true, sub: dir ? `open ${fmtOdds(m.open[k])}` : null });
+      };
+      tb.append(h('tr', { class: b.key === state.book ? 'sel' : null },
+        h('th', { scope: 'row' }, b.title),
+        lineC(s, s ? spreadText(s.line, g) : null), oddsC(s, 'a'), oddsC(s, 'b'),
+        lineC(t, t ? num(t.line) : null, 'gs'), oddsC(t, 'a'), oddsC(t, 'b'),
+        td(lastT ? T.stamp.format(new Date(lastT)) : null, { cls: 'muted gs' })));
+    }
+    return h('div', { class: 'table-wrap' }, h('table', { class: 'books' },
+      h('thead', null, h('tr', null, h('th', null, 'Bookmaker'), h('th', null, 'Spread'),
+        h('th', { class: 's1' }, `${ab(g.home)} odds`), h('th', { class: 's2' }, `${ab(g.away)} odds`),
+        h('th', { class: 'gs' }, 'Total'), h('th', { class: 's1' }, 'Over odds'), h('th', { class: 's2' }, 'Under odds'),
+        h('th', { class: 'gs' }, 'Last change'))),
+      tb));
   }
 
   function renderSheet() {
@@ -464,69 +563,16 @@
       v ? h('p', { class: 'result' }, h('b', null, v.score), [v.ats, v.ou].filter(Boolean).map((x) => ` · ${x}`).join('')) : null,
       h('p', { class: 'teams' }, `Prices from ${bookTitle}`));
 
-    // summary
-    const closeLbl = started ? 'Close' : 'Now';
+    // movement summary: lines AND odds, open vs now
     const summary = h('section', { class: 'block' },
-      h('h3', null, 'Summary'),
-      h('div', { class: 'table-wrap narrow' }, h('table', { class: 'summary' },
-        h('thead', null, h('tr', null, h('th', null, ''), h('th', null, 'Open'), h('th', null, closeLbl), h('th', { class: 'mvh' }, 'Move'), h('th', null, 'Line changes'))),
-        h('tbody', null, summaryRow('Spread', sp, g, true), summaryRow('Total', tt, g, false)))));
-
-    // bookmakers
-    let books = null;
-    const rowsByBook = g.byBook ?? [];
-    if (rowsByBook.length) {
-      const tb = h('tbody');
-      for (const b of rowsByBook) {
-        const s = b.spreads; const t = b.totals;
-        const lastT = [s?.t, t?.t].filter(Boolean).sort().pop();
-        tb.append(h('tr', { class: b.key === state.book ? 'sel' : null },
-          h('th', { scope: 'row' }, b.title),
-          cell(s ? spreadText(s.line, g) : null, 'now'), cell(s ? fmtOdds(s.a) : null), cell(s ? fmtOdds(s.b) : null),
-          cell(t ? num(t.line) : null, 'now gs'), cell(t ? fmtOdds(t.a) : null), cell(t ? fmtOdds(t.b) : null),
-          cell(lastT ? T.stamp.format(new Date(lastT)) : null, 'muted gs')));
-      }
-      books = h('section', { class: 'block' },
-        h('h3', null, started ? 'Closing line by bookmaker' : 'Current line by bookmaker'),
-        h('div', { class: 'table-wrap' }, h('table', { class: 'books' },
-          h('thead', null, h('tr', null, h('th', null, 'Bookmaker'), h('th', null, 'Spread'), h('th', null, `${ab(g.home)} odds`), h('th', null, `${ab(g.away)} odds`),
-            h('th', { class: 'gs' }, 'Total'), h('th', null, 'Over odds'), h('th', null, 'Under odds'), h('th', { class: 'gs' }, 'Last change'))),
-          tb)));
-    }
-
-    // history
-    const hist = mergeHistory(sp, tt);
-    const LIMIT = 40;
-    const tbh = h('tbody');
-    const shown = state.showAll ? hist.length : Math.min(LIMIT, hist.length);
-    for (let k = hist.length - 1; k >= hist.length - shown; k--) {
-      const r = hist[k];
-      const p = k > 0 ? hist[k - 1] : null;
-      const lineMoved = (a, b) => (p && a && b && a.line !== b.line ? 'chg' : null);
-      tbh.append(h('tr', null,
-        h('td', { class: 'muted' }, T.stamp.format(new Date(r.t))),
-        h('td', { class: ['now', lineMoved(r.s, p?.s)].filter(Boolean).join(' ') }, r.s ? spreadText(r.s.line, g) : '–'),
-        h('td', null, r.s ? fmtOdds(r.s.a) : '–'),
-        h('td', null, r.s ? fmtOdds(r.s.b) : '–'),
-        h('td', { class: ['now', 'gs', lineMoved(r.tt, p?.tt)].filter(Boolean).join(' ') }, r.tt ? num(r.tt.line) : '–'),
-        h('td', null, r.tt ? fmtOdds(r.tt.a) : '–'),
-        h('td', null, r.tt ? fmtOdds(r.tt.b) : '–')));
-    }
-    const history = h('section', { class: 'block' },
-      h('h3', null, 'Price history'),
-      h('p', { class: 'legend' }, `Newest first. A highlighted line moved from the row below it. Odds in ${FMT_NAME[state.fmt]} format.`),
-      h('div', { class: 'table-wrap' }, h('table', { class: 'history' },
-        h('thead', null,
-          h('tr', { class: 'grp' }, h('th', { rowspan: '2' }, 'Time'), h('th', { colspan: '3', class: 'g' }, 'Spread'), h('th', { colspan: '3', class: 'g' }, 'Total')),
-          h('tr', null, h('th', null, 'Line'), h('th', null, `${ab(g.home)} odds`), h('th', null, `${ab(g.away)} odds`),
-            h('th', { class: 'gs' }, 'Line'), h('th', null, 'Over odds'), h('th', null, 'Under odds'))),
-        tbh)),
-      hist.length > LIMIT ? h('button', { type: 'button', class: 'more', onclick: () => { state.showAll = !state.showAll; renderSheet(); } },
-        state.showAll ? 'Show latest 40 only' : `Show all ${hist.length} rows`) : null);
+      h('h3', null, 'Movement summary'),
+      changeKey('between the opening price and now'),
+      summaryTable(g, sp, tt, started ? 'Close' : 'Now'),
+      h('p', { class: 'legend' }, 'Spread handicap: ▲/▼ follow the home team\'s handicap number (▼ = the line moved toward the home team). Odds changes are measured in decimal / Hong Kong points. Min, Max and Updates count every stored snapshot.'));
 
     // charts
     const oddsLbl = chartFmt() === 'hk' ? 'Hong Kong' : 'Decimal';
-    const c1 = chartCard('Spread line (home team points)', [], 'tall');
+    const c1 = chartCard('Spread line (home handicap)', [], 'tall');
     const c2 = chartCard(`Spread odds (${oddsLbl})`, [[ab(g.home), '--s1'], [ab(g.away), '--s2']], 'short');
     const c3 = chartCard('Total points line', [], 'tall');
     const c4 = chartCard(`Total odds (${oddsLbl})`, [['Over', '--s1'], ['Under', '--s2']], 'short');
@@ -535,23 +581,62 @@
       h('p', { class: 'legend' }, 'Spread charts plot the home team\'s handicap (below 0 = home favoured). The dashed line marks tip-off. Hover or tap a chart to read exact values.'),
       h('div', { class: 'chart-grid' }, c1.card, c2.card, c3.card, c4.card));
 
+    // bookmakers
+    const books = (g.byBook ?? []).length ? h('section', { class: 'block' },
+      h('h3', null, started ? 'Closing line by bookmaker' : 'Current line by bookmaker'),
+      h('p', { class: 'legend' }, 'Coloured cells moved since that bookmaker first posted the line.'),
+      booksTable(g, started)) : null;
+
+    // history: every colour compares a row with the one below it (the previous snapshot)
+    const hist = mergeHistory(sp, tt);
+    const LIMIT = 40;
+    const tbh = h('tbody');
+    const shown = state.showAll ? hist.length : Math.min(LIMIT, hist.length);
+    const cmp = (cur, prev, key) => (cur && prev ? dirOf(cur[key] - prev[key]) : null);
+    for (let k = hist.length - 1; k >= hist.length - shown; k--) {
+      const r = hist[k];
+      const p = k > 0 ? hist[k - 1] : null;
+      tbh.append(h('tr', null,
+        h('td', { class: 'muted' }, T.stamp.format(new Date(r.t))),
+        td(r.s ? spreadText(r.s.line, g) : null, { cls: 'now', dir: cmp(r.s, p?.s, 'line'), arrow: true }),
+        td(r.s ? fmtOdds(r.s.a) : null, { dir: cmp(r.s, p?.s, 'a'), arrow: true }),
+        td(r.s ? fmtOdds(r.s.b) : null, { dir: cmp(r.s, p?.s, 'b'), arrow: true }),
+        td(r.tt ? num(r.tt.line) : null, { cls: 'now gs', dir: cmp(r.tt, p?.tt, 'line'), arrow: true }),
+        td(r.tt ? fmtOdds(r.tt.a) : null, { dir: cmp(r.tt, p?.tt, 'a'), arrow: true }),
+        td(r.tt ? fmtOdds(r.tt.b) : null, { dir: cmp(r.tt, p?.tt, 'b'), arrow: true })));
+    }
+    const history = h('section', { class: 'block' },
+      h('h3', null, 'Price history'),
+      changeKey('versus the previous snapshot'),
+      h('p', { class: 'legend' }, `Newest first. Every odds or line change is stored, so no movement is lost. Odds in ${FMT_NAME[state.fmt]} format.`),
+      h('div', { class: 'table-wrap' }, h('table', { class: 'history' },
+        h('thead', null,
+          h('tr', { class: 'grp' }, h('th', { rowspan: '2' }, 'Time'), h('th', { colspan: '3', class: 'g' }, 'Spread'), h('th', { colspan: '3', class: 'g' }, 'Total points')),
+          h('tr', null, h('th', null, 'Line'), h('th', { class: 's1' }, `${ab(g.home)} odds`), h('th', { class: 's2' }, `${ab(g.away)} odds`),
+            h('th', { class: 'gs' }, 'Line'), h('th', { class: 's1' }, 'Over odds'), h('th', { class: 's2' }, 'Under odds'))),
+        tbh)),
+      hist.length > LIMIT ? h('button', { type: 'button', class: 'more', onclick: () => { state.showAll = !state.showAll; renderSheet(); } },
+        state.showAll ? 'Show latest 40 only' : `Show all ${hist.length} rows`) : null);
+
     view.append(h('div', { class: 'sheet' }, back, head, summary, charts, books, history));
 
     if (!window.Chart) {
-      charts.replaceChildren(h('h3', null, 'Charts'), h('p', { class: 'muted' }, 'The chart library did not load. All values are in the tables above.'));
+      charts.replaceChildren(h('h3', null, 'Charts'), h('p', { class: 'muted' }, 'The chart library did not load. All values are in the tables.'));
     } else {
-      const draw = (pts, lineCard, oddsCard, lineLabel) => {
+      const draw = (pts, lineCard, oddsCard, kind) => {
         if (!pts.length) { lineCard.card.remove(); oddsCard.card.remove(); return; }
         const x0 = Date.parse(pts[0].t);
         const endX = Math.max(Math.min(Date.now(), tip), Date.parse(pts[pts.length - 1].t));
         const f2 = (x) => x.toFixed(2);
+        const spread = kind === 'spread';
         state.charts.push(new window.Chart(lineCard.canvas, {
           type: 'line',
-          data: { datasets: [ds('Line', stepData(pts, endX, (p) => p.line), cssVar('--s1'))] },
-          options: chartOptions(x0, endX, tip, (x) => signedOrNum(x, lineLabel), (c) => ` ${lineLabel === 'spread' ? spreadText(c.parsed.y, g) : num(c.parsed.y)}`),
+          data: { datasets: [ds('Line', stepData(pts, endX, (p) => p.line), cssVar('--s1'), cssVar('--s1-wash'))] },
+          options: chartOptions(x0, endX, tip, (x) => (spread ? signed(x) : num(x)),
+            (c) => ` ${spread ? spreadText(c.parsed.y, g) : num(c.parsed.y)}`),
           plugins: [crosshair, tipLine],
         }));
-        const [na, nb] = lineLabel === 'spread' ? [ab(g.home), ab(g.away)] : ['Over', 'Under'];
+        const [na, nb] = spread ? [ab(g.home), ab(g.away)] : ['Over', 'Under'];
         state.charts.push(new window.Chart(oddsCard.canvas, {
           type: 'line',
           data: { datasets: [ds(na, stepData(pts, endX, (p) => chartOdds(p.a)), cssVar('--s1')), ds(nb, stepData(pts, endX, (p) => chartOdds(p.b)), cssVar('--s2'))] },
@@ -563,7 +648,6 @@
       draw(tt, c3, c4, 'total');
     }
   }
-  const signedOrNum = (x, kind) => (kind === 'spread' ? signed(x) : num(x));
 
   // ---------- navigation ----------
   function render() {
@@ -619,10 +703,6 @@
     if (m) state.gameId = decodeURIComponent(m[1]);
     setInterval(() => { if (document.visibilityState === 'visible') refresh(); }, 60_000);
   }
-
-  const redrawTheme = () => { if (state.gameId) renderSheet(); };
-  window.matchMedia?.('(prefers-color-scheme: dark)')?.addEventListener?.('change', redrawTheme);
-  new MutationObserver(redrawTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
   if (window.Chart) window.Chart.defaults.font.family = cssVar('--f-body') || 'system-ui, sans-serif';
   refresh();

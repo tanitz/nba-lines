@@ -127,10 +127,22 @@ export function gameDetail(db, id, book = CONSENSUS) {
       WHERE s2.game_id = s.game_id AND s2.bookmaker = s.bookmaker AND s2.market = s.market
       ORDER BY s2.at DESC, s2.id DESC LIMIT 1)
   `).all(id);
+  // ราคาแรกที่เห็นของแต่ละเจ้า (ไว้เทียบว่าเจ้านั้นขยับแค่ไหน)
+  const first = db.prepare(`
+    SELECT s.bookmaker, s.market, s.at, s.line, s.price_a, s.price_b FROM snapshots s
+    WHERE s.game_id = ? AND s.id = (
+      SELECT s2.id FROM snapshots s2
+      WHERE s2.game_id = s.game_id AND s2.bookmaker = s.bookmaker AND s2.market = s.market
+      ORDER BY s2.at ASC, s2.id ASC LIMIT 1)
+  `).all(id);
   const byBook = books.map((b) => {
     const pick = (m) => {
       const r = latest.find((x) => x.bookmaker === b.key && x.market === m);
-      return r ? { t: r.at, line: r.line, a: r.price_a, b: r.price_b } : null;
+      const o = first.find((x) => x.bookmaker === b.key && x.market === m);
+      return r ? {
+        t: r.at, line: r.line, a: r.price_a, b: r.price_b,
+        open: { t: o.at, line: o.line, a: o.price_a, b: o.price_b },
+      } : null;
     };
     return { key: b.key, title: b.title, spreads: pick('spreads'), totals: pick('totals') };
   });

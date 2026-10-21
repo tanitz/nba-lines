@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
 <title>NBA Line Tracker</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -11,15 +12,24 @@
 </head>
 <body>
 <!--APP-START-->
-<div class="app">
-  <header class="top">
+<header class="hero">
+  <div class="hero-in">
     <div class="brand">
-      <h1>NBA Line Tracker</h1>
-      <p class="sub">Pre-game spread and total movement</p>
+      <svg class="ball" viewBox="0 0 32 32" aria-hidden="true">
+        <circle cx="16" cy="16" r="14.2" fill="#ff8a1f" stroke="#7a2e00" stroke-width="1.6"/>
+        <path d="M16 2v28M2 16h28" stroke="#7a2e00" stroke-width="1.4" fill="none"/>
+        <path d="M5.5 5.5c5 4.5 5 16.5 0 21M26.5 5.5c-5 4.5-5 16.5 0 21" stroke="#7a2e00" stroke-width="1.4" fill="none"/>
+      </svg>
+      <div>
+        <h1>NBA Line Tracker</h1>
+        <p class="sub">Pre-game spread, total and odds movement</p>
+      </div>
     </div>
     <div class="status" id="status" aria-live="polite"></div>
-  </header>
+  </div>
+</header>
 
+<div class="app">
   <p class="demo-note" id="demoNote" hidden>Demo mode: randomly generated sample data, not real odds.</p>
 
   <div class="poll-form" id="pollForm" hidden>
