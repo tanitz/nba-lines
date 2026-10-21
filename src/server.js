@@ -44,7 +44,7 @@ function status() {
     lastAttempt: odds && { at: odds.at, ok: !!odds.ok, error: odds.error },
     lastSuccess: ok && { at: ok.at, games: ok.games, changes: ok.changes },
     credits: credits && { remaining: credits.credits_remaining, used: credits.credits_used, at: credits.at },
-    nextPollAt: config.demo || !config.apiKey ? null : poller.nextOddsAt().toISOString(),
+    nextPollAt: config.demo || !config.apiKey ? null : poller.forecastNextOddsAt().toISOString(),
     intervalMin: config.demo ? null : poller.intervalMinutes(),
     bookmakers: listBookmakers(db),
   };

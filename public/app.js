@@ -102,6 +102,14 @@
     const ms = Date.parse(iso) - Date.now();
     return ms < 0 ? `${span(ms)} ago` : `in ${span(ms)}`;
   };
+  // "~02:25" today, "~02:25 tomorrow", "~24 Oct, 02:25" later; "due now" once that time has passed
+  const nextCheck = (iso) => {
+    const d = new Date(iso);
+    if (d.getTime() <= Date.now()) return 'due now';
+    const days = Math.round((Date.parse(T.dayKey.format(d)) - Date.parse(T.dayKey.format(new Date()))) / 864e5);
+    if (days <= 0) return `~${T.time.format(d)}`;
+    return days === 1 ? `~${T.time.format(d)} tomorrow` : `~${T.stamp.format(d)}`;
+  };
 
   const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
@@ -169,7 +177,7 @@
       el.append(h('span', null, h('i', { class: 'dot' }), 'No odds fetched yet'));
     }
     if (s.nextPollAt) {
-      el.append(h('span', null, 'Next check ', h('b', null, `~${T.time.format(new Date(s.nextPollAt))}`)));
+      el.append(h('span', null, 'Next check ', h('b', null, nextCheck(s.nextPollAt))));
     }
     if (s.credits && s.credits.remaining != null) {
       el.append(h('span', null, 'API credits left ', h('b', null, s.credits.remaining.toLocaleString('en-US'))));

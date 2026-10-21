@@ -27,9 +27,9 @@ export function createPoller(db, cfg = defaultConfig, deps = {}) {
     return row?.t ? (Date.parse(row.t) - now.getTime()) / MIN : null;
   }
 
-  function intervalMinutes(now) {
+  // m = นาทีก่อนแมตช์ที่ใกล้ที่สุดเริ่ม (null = ไม่มีแมตช์) ไม่ส่งมาก็คำนวณจากเวลา now
+  function intervalMinutes(now, m = nearestGameMinutes(now)) {
     const p = cfg.poll;
-    const m = nearestGameMinutes(now);
     let iv;
     if (m == null) iv = p.idleMin;
     else if (m > 24 * 60) iv = p.farMin;
@@ -49,6 +49,38 @@ export function createPoller(db, cfg = defaultConfig, deps = {}) {
     const last = lastPoll(db, 'odds');
     if (!last) return now;
     return new Date(Date.parse(last.at) + intervalMinutes(now) * MIN);
+  }
+
+  /**
+   * คาดการณ์เวลาดึงครั้งถัดไป (ใช้แสดงบนหน้าเว็บเท่านั้น ไม่กระทบการตัดสินใจดึงจริง)
+   * ช่วงห่างจะสั้นลงเมื่อใกล้เวลาแข่ง จึงไล่ดูทีละช่วงตามเวลาแข่งที่รู้อยู่แล้ว
+   * แทนที่จะบวกช่วงห่าง ณ ตอนนี้ต่อจากครั้งล่าสุดตรง ๆ (ซึ่งจะช้ากว่าความจริง)
+   */
+  function forecastNextOddsAt(now = clock()) {
+    const last = lastPoll(db, 'odds');
+    if (!last) return now;
+    const lastMs = Date.parse(last.at);
+    const t0 = now.getTime();
+    const starts = db.prepare(
+      `SELECT DISTINCT commence_time AS t FROM games WHERE commence_time > ? ORDER BY commence_time`,
+    ).all(now.toISOString()).map((r) => Date.parse(r.t)).sort((a, b) => a - b);
+
+    // จุดที่ช่วงห่างเปลี่ยน: ตอนนี้ เวลาเริ่มแข่ง และ 24 ชม. / 6 ชม. / 1 ชม. ก่อนเริ่มแข่งของแต่ละแมตช์
+    const cuts = new Set([t0]);
+    for (const g of starts) {
+      cuts.add(g);
+      for (const m of [60, 6 * 60, 24 * 60]) if (g - m * MIN > t0) cuts.add(g - m * MIN);
+    }
+    const ts = [...cuts].sort((a, b) => a - b);
+    for (let i = 0; i < ts.length; i++) {
+      const a = ts[i];
+      const b = i + 1 < ts.length ? ts[i + 1] : Infinity;
+      const g = starts.find((x) => x > a);                        // แมตช์ที่ใกล้ที่สุด ณ เวลา a
+      const iv = intervalMinutes(new Date(a), g == null ? null : (g - a) / MIN);
+      const due = Math.max(a, lastMs + iv * MIN);
+      if (due < b) return new Date(due);
+    }
+    return new Date(t0);                                          // ไม่ควรมาถึงตรงนี้ (ช่วงสุดท้ายไม่มีขอบบน)
   }
 
   async function pollOdds() {
@@ -126,6 +158,7 @@ export function createPoller(db, cfg = defaultConfig, deps = {}) {
     pollOdds,
     pollScores,
     nextOddsAt,
+    forecastNextOddsAt,
     intervalMinutes: () => intervalMinutes(clock()),
     start() {
       if (!cfg.apiKey) {

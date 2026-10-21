@@ -80,3 +80,46 @@ test('parse scores', () => {
     scores: [{ name: 'A', score: '110' }, { name: 'B', score: '104' }] }]);
   assert.deepEqual(r[0], { id: 'g1', home_score: 110, away_score: 104, completed: 1 });
 });
+
+test('forecast of the next poll equals the time the poller really fires', async () => {
+  const db = openDb(':memory:');
+  const H = 3600_000;
+  const tips = [];                                   // ทุกวัน 23:00, 23:30, 00:30 (UTC)
+  for (let d = 0; d < 5; d++) for (const m of [0, 30, 90]) tips.push(Date.UTC(2026, 9, 21 + d, 23, m));
+  let now = new Date(Date.UTC(2026, 9, 21, 15, 25));
+  let calls = 0;
+  // ค่าเริ่มต้นของแผนฟรีใน workflow
+  const cfg = { poll: { farMin: 1440, dayMin: 720, nearMin: 240, closeMin: 60, idleMin: 1440, tickSec: 60 },
+    minCreditsLeft: 10, scoresEveryHours: 0 };
+  const p = createPoller(db, cfg, {
+    now: () => now,
+    log: () => {},
+    fetchOdds: async () => {
+      calls++;
+      const data = tips.filter((t) => t > now.getTime() && t - now.getTime() < 40 * H).map((t) => ({
+        ...event(-5.5, 221.5, now.toISOString()), id: `g${t}`, commence_time: new Date(t).toISOString(),
+      }));
+      return { data, credits_remaining: 400, credits_used: 2, credits_last: 2 };
+    },
+  });
+  const at = (d) => d.toISOString().slice(5, 16).replace('T', ' ');
+
+  await p.tick();                                    // ครั้งแรก 21 ต.ค. 15:25Z แมตช์แรก 23:00Z (ห่าง 7 ชม. 35 นาที)
+  assert.equal(calls, 1);
+  assert.equal(at(p.nextOddsAt()), '10-22 03:25');          // แบบเดิม: บวก 12 ชม. ตรง ๆ ช้าเกินจริง
+  assert.equal(at(p.forecastNextOddsAt()), '10-21 19:25');  // เหลือ < 6 ชม. ช่วงห่างลดเป็น 4 ชม.
+
+  const fired = [];
+  for (let i = 0; i < 8; i++) {
+    const forecast = p.forecastNextOddsAt();
+    const before = calls;
+    for (let guard = 0; calls === before && guard < 3000; guard++) {
+      now = new Date(now.getTime() + 60_000);
+      await p.tick({ slackMin: 0 });
+    }
+    assert.equal(calls, before + 1);
+    assert.equal(now.toISOString(), forecast.toISOString(), `poll #${i + 2}`);
+    fired.push(at(now));
+  }
+  assert.deepEqual(fired.slice(0, 4), ['10-21 19:25', '10-21 22:00', '10-21 23:00', '10-22 00:00']);
+});

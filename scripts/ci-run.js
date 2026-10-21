@@ -27,12 +27,12 @@ const force = process.env.FORCE_BUILD === 'true';
 const changed = polled || force;
 if (changed) {
   const r = buildSite(db, outDir, {
-    nextPollAt: poller.nextOddsAt().toISOString(),
+    nextPollAt: poller.forecastNextOddsAt().toISOString(),
     intervalMin: poller.intervalMinutes(),
   });
   console.log(`สร้างเว็บใหม่ (${r.games} แมตช์)`);
 } else {
-  console.log(`ยังไม่ถึงรอบ รอบถัดไป ${poller.nextOddsAt().toISOString()}`);
+  console.log(`ยังไม่ถึงรอบ รอบถัดไป ${poller.forecastNextOddsAt().toISOString()}`);
 }
 
 db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
