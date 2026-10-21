@@ -1,0 +1,98 @@
+name: เก็บราคา NBA
+
+on:
+  schedule:
+    # ทุก 10 นาที (นาทีที่ 4, 14, 24, ...) ตัวสคริปต์จะตัดสินเองว่าถึงรอบเรียก API หรือยัง
+    - cron: "4,14,24,34,44,54 * * * *"
+  workflow_dispatch:
+    inputs:
+      rebuild:
+        description: "สร้างหน้าเว็บใหม่แม้ไม่ได้ดึงราคา"
+        type: boolean
+        default: true
+  push:
+    branches: [main]
+    paths: ["public/**", "src/**", "scripts/**"]
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: odds-update
+  cancel-in-progress: false
+
+env:
+  ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+  DB_PATH: data/odds.db
+  POLL_SLACK_MIN: "3"
+  REGIONS: ${{ vars.REGIONS || 'eu' }}
+  BOOKMAKERS: ${{ vars.BOOKMAKERS || '' }}
+  DEFAULT_BOOK: ${{ vars.DEFAULT_BOOK || 'pinnacle' }}
+  # ค่าเริ่มต้นตั้งให้พอดีแผนฟรี 500 เครดิต/เดือน (ราว 7 ครั้งต่อวัน)
+  # อัปเกรดแผนแล้ว ตั้ง Variables เช่น POLL_FAR_MIN=180 POLL_DAY_MIN=60 POLL_NEAR_MIN=20 POLL_CLOSE_MIN=10
+  POLL_FAR_MIN: ${{ vars.POLL_FAR_MIN || '1440' }}
+  POLL_DAY_MIN: ${{ vars.POLL_DAY_MIN || '720' }}
+  POLL_NEAR_MIN: ${{ vars.POLL_NEAR_MIN || '240' }}
+  POLL_CLOSE_MIN: ${{ vars.POLL_CLOSE_MIN || '60' }}
+  POLL_IDLE_MIN: ${{ vars.POLL_IDLE_MIN || '1440' }}
+  SCORES_EVERY_HOURS: ${{ vars.SCORES_EVERY_HOURS || '24' }}
+  MIN_CREDITS_LEFT: ${{ vars.MIN_CREDITS_LEFT || '10' }}
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      changed: ${{ steps.run.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: โหลดฐานข้อมูลเดิมจาก branch data
+        run: |
+          mkdir -p data
+          if git fetch -q --depth=1 origin data 2>/dev/null; then
+            git show FETCH_HEAD:odds.db > data/odds.db
+            echo "โหลดฐานข้อมูลแล้ว $(du -h data/odds.db | cut -f1)"
+          else
+            echo "ยังไม่มีฐานข้อมูล เริ่มใหม่"
+          fi
+
+      - name: ดึงราคาและสร้างหน้าเว็บ
+        id: run
+        env:
+          FORCE_BUILD: ${{ github.event_name == 'push' || inputs.rebuild == true }}
+        run: node --no-warnings=ExperimentalWarning scripts/ci-run.js
+
+      - name: บันทึกฐานข้อมูลกลับไปที่ branch data
+        if: steps.run.outputs.polled == 'true'
+        run: |
+          cd data
+          git init -q -b data
+          git add odds.db
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -qm "odds $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" data:data
+
+      - name: เตรียมไฟล์เว็บ
+        if: steps.run.outputs.changed == 'true'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: update
+    if: needs.update.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4

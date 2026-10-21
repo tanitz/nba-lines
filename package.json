@@ -1,0 +1,16 @@
+{
+  "name": "nba-line-tracker",
+  "version": "1.0.0",
+  "description": "เก็บประวัติราคาแฮนดิแคปและสูง/ต่ำ NBA จาก The Odds API แล้วแสดงเป็นกราฟก่อนแข่ง",
+  "type": "module",
+  "main": "src/server.js",
+  "engines": { "node": ">=22.13" },
+  "scripts": {
+    "start": "node --no-warnings=ExperimentalWarning src/server.js",
+    "demo": "DEMO=1 node --no-warnings=ExperimentalWarning src/server.js",
+    "poll": "node --no-warnings=ExperimentalWarning src/poller.js --once",
+    "export-static": "node --no-warnings=ExperimentalWarning scripts/export-static.js",
+    "test": "node --no-warnings=ExperimentalWarning --test test/*.test.js"
+  },
+  "license": "MIT"
+}
