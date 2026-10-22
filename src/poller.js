@@ -45,42 +45,41 @@ export function createPoller(db, cfg = defaultConfig, deps = {}) {
     return iv;
   }
 
+  /**
+   * เวลาที่ตารางกำหนดให้ดึงครั้งถัดไป นับจากครั้งล่าสุด (เป็นเวลาในอดีตได้ ถ้าเลยกำหนดแล้ว)
+   * ช่วงห่างสั้นลงเมื่อใกล้เวลาแข่ง จึงไล่ดูทีละช่วงตามเวลาเริ่มแข่งที่รู้อยู่แล้ว
+   * และนับเวลาเริ่มแข่งตั้งแต่ "ครั้งล่าสุด" ไม่ใช่ "ตอนนี้" เพื่อให้รอบที่ตัวตั้งเวลาภายนอก (cron ของ
+   * GitHub) มาช้าหรือถูกข้ามไป ถูกดึงชดเชยทันทีที่มีโอกาส แทนที่จะหายไปเพราะแมตช์เริ่มไปแล้วและช่วงห่างยาวขึ้น
+   */
   function nextOddsAt(now = clock()) {
     const last = lastPoll(db, 'odds');
     if (!last) return now;
-    return new Date(Date.parse(last.at) + intervalMinutes(now) * MIN);
-  }
-
-  /**
-   * คาดการณ์เวลาดึงครั้งถัดไป (ใช้แสดงบนหน้าเว็บเท่านั้น ไม่กระทบการตัดสินใจดึงจริง)
-   * ช่วงห่างจะสั้นลงเมื่อใกล้เวลาแข่ง จึงไล่ดูทีละช่วงตามเวลาแข่งที่รู้อยู่แล้ว
-   * แทนที่จะบวกช่วงห่าง ณ ตอนนี้ต่อจากครั้งล่าสุดตรง ๆ (ซึ่งจะช้ากว่าความจริง)
-   */
-  function forecastNextOddsAt(now = clock()) {
-    const last = lastPoll(db, 'odds');
-    if (!last) return now;
     const lastMs = Date.parse(last.at);
-    const t0 = now.getTime();
     const starts = db.prepare(
       `SELECT DISTINCT commence_time AS t FROM games WHERE commence_time > ? ORDER BY commence_time`,
-    ).all(now.toISOString()).map((r) => Date.parse(r.t)).sort((a, b) => a - b);
+    ).all(last.at).map((r) => Date.parse(r.t)).sort((a, b) => a - b);
 
-    // จุดที่ช่วงห่างเปลี่ยน: ตอนนี้ เวลาเริ่มแข่ง และ 24 ชม. / 6 ชม. / 1 ชม. ก่อนเริ่มแข่งของแต่ละแมตช์
-    const cuts = new Set([t0]);
+    // จุดที่ช่วงห่างเปลี่ยน: ครั้งล่าสุด เวลาเริ่มแข่ง และ 24 ชม. / 6 ชม. / 1 ชม. ก่อนเริ่มแข่งของแต่ละแมตช์
+    const cuts = new Set([lastMs]);
     for (const g of starts) {
       cuts.add(g);
-      for (const m of [60, 6 * 60, 24 * 60]) if (g - m * MIN > t0) cuts.add(g - m * MIN);
+      for (const m of [60, 6 * 60, 24 * 60]) if (g - m * MIN > lastMs) cuts.add(g - m * MIN);
     }
     const ts = [...cuts].sort((a, b) => a - b);
     for (let i = 0; i < ts.length; i++) {
       const a = ts[i];
       const b = i + 1 < ts.length ? ts[i + 1] : Infinity;
-      const g = starts.find((x) => x > a);                        // แมตช์ที่ใกล้ที่สุด ณ เวลา a
+      const g = starts.find((x) => x > a);                         // แมตช์ที่ใกล้ที่สุด ณ เวลา a
       const iv = intervalMinutes(new Date(a), g == null ? null : (g - a) / MIN);
       const due = Math.max(a, lastMs + iv * MIN);
       if (due < b) return new Date(due);
     }
-    return new Date(t0);                                          // ไม่ควรมาถึงตรงนี้ (ช่วงสุดท้ายไม่มีขอบบน)
+    return new Date(lastMs);                                       // ไม่ควรมาถึงตรงนี้ (ช่วงสุดท้ายไม่มีขอบบน)
+  }
+
+  /** เหมือน nextOddsAt แต่ไม่คืนเวลาในอดีต (ใช้แสดงบนหน้าเว็บ) */
+  function forecastNextOddsAt(now = clock()) {
+    return new Date(Math.max(now.getTime(), nextOddsAt(now).getTime()));
   }
 
   async function pollOdds() {
@@ -139,7 +138,7 @@ export function createPoller(db, cfg = defaultConfig, deps = {}) {
     }
   }
 
-  /** slackMin: ยอมให้ดึงก่อนกำหนดได้กี่นาที (ใช้กับตัวตั้งเวลาภายนอกที่รันทุก ๆ 10 นาที) */
+  /** slackMin: ยอมให้ดึงก่อนกำหนดได้กี่นาที (ใช้กับตัวตั้งเวลาภายนอกที่รันเป็นรอบ ๆ เช่น cron ทุก 5 นาที) */
   async function tick({ slackMin = cfg.poll.slackMin ?? 0 } = {}) {
     if (running) return;
     running = true;

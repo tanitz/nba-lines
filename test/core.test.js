@@ -106,7 +106,7 @@ test('forecast of the next poll equals the time the poller really fires', async 
 
   await p.tick();                                    // ครั้งแรก 21 ต.ค. 15:25Z แมตช์แรก 23:00Z (ห่าง 7 ชม. 35 นาที)
   assert.equal(calls, 1);
-  assert.equal(at(p.nextOddsAt()), '10-22 03:25');          // แบบเดิม: บวก 12 ชม. ตรง ๆ ช้าเกินจริง
+  assert.equal(at(p.nextOddsAt()), '10-21 19:25');          // เหลือ < 6 ชม. ช่วงห่างลดเป็น 4 ชม. (บวก 12 ชม. ตรง ๆ จะช้าเกินจริง)
   assert.equal(at(p.forecastNextOddsAt()), '10-21 19:25');  // เหลือ < 6 ชม. ช่วงห่างลดเป็น 4 ชม.
 
   const fired = [];
@@ -122,4 +122,43 @@ test('forecast of the next poll equals the time the poller really fires', async 
     fired.push(at(now));
   }
   assert.deepEqual(fired.slice(0, 4), ['10-21 19:25', '10-21 22:00', '10-21 23:00', '10-22 00:00']);
+});
+
+test('a poll that fell due while the external scheduler was away is made up, not lost', async () => {
+  const db = openDb(':memory:');
+  const tips = ['2026-10-21T23:30:00Z', '2026-10-22T00:10:00Z', '2026-10-22T00:40:00Z',
+    '2026-10-22T02:00:00Z', '2026-10-22T02:10:00Z'].map(Date.parse);
+  let now = new Date('2026-10-21T23:17:48Z');
+  let calls = 0;
+  const cfg = { poll: { farMin: 1440, dayMin: 720, nearMin: 240, closeMin: 60, idleMin: 1440, tickSec: 60, slackMin: 3 },
+    minCreditsLeft: 10, scoresEveryHours: 0 };
+  const p = createPoller(db, cfg, {
+    now: () => now,
+    log: () => {},
+    fetchOdds: async () => {
+      calls++;
+      const data = tips.filter((t) => t > now.getTime()).map((t) => ({
+        ...event(-5.5, 221.5, now.toISOString()), id: `g${t}`, commence_time: new Date(t).toISOString(),
+      }));
+      return { data, credits_remaining: 400, credits_used: 2, credits_last: 2 };
+    },
+  });
+  const at = (d) => d.toISOString().slice(5, 16).replace('T', ' ');
+
+  await p.tick();                                    // 23:17 แมตช์ถัดไปอีก 12 นาที: รอบละ 60 นาที ถึงกำหนด 00:17
+  assert.equal(calls, 1);
+  assert.equal(at(p.nextOddsAt()), '10-22 00:17');
+  now = new Date('2026-10-22T00:04:20Z');
+  await p.tick();                                    // ยังไม่ถึงกำหนด
+  assert.equal(calls, 1);
+
+  // cron ของ GitHub หายไป 50 นาที กลับมาตอน 00:54 ซึ่งแมตช์ที่ใกล้ที่สุด (02:00) อยู่ห่าง 66 นาที
+  // ช่วงห่างตามสถานะ ณ ตอนนี้จึงเป็น 4 ชม. แต่รอบ 00:17 ที่ค้างอยู่ต้องถูกดึงชดเชย ไม่ใช่หายไป
+  now = new Date('2026-10-22T00:54:32Z');
+  assert.equal(p.intervalMinutes(), 240);
+  assert.equal(at(p.nextOddsAt()), '10-22 00:17');
+  assert.equal(at(p.forecastNextOddsAt()), '10-22 00:54');   // หน้าเว็บไม่แสดงเวลาที่ผ่านมาแล้ว
+  await p.tick();
+  assert.equal(calls, 2);
+  assert.equal(at(p.nextOddsAt()), '10-22 01:54');           // ตารางเริ่มนับใหม่จากรอบที่ดึงชดเชย
 });
