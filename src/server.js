@@ -6,6 +6,7 @@ import { openDb, lastPoll, lastCredits } from './db.js';
 import { createPoller } from './poller.js';
 import { listGames, gameDetail, listBookmakers, CONSENSUS } from './series.js';
 import { seedDemo } from './demo.js';
+import { buildResults, listDays } from './results.js';
 
 const PUBLIC = path.join(ROOT, 'public');
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
@@ -67,8 +68,12 @@ const server = http.createServer(async (req, res) => {
   try {
     if (req.method === 'GET' && p === '/api/status') return send(res, 200, status());
     if (req.method === 'GET' && p === '/api/games') {
-      return send(res, 200, listGames(db, { scope: url.searchParams.get('scope') || 'upcoming', book }));
+      return send(res, 200, listGames(db, {
+        scope: url.searchParams.get('scope') || 'upcoming', book, day: url.searchParams.get('day') || null,
+      }));
     }
+    if (req.method === 'GET' && p === '/api/days') return send(res, 200, listDays(db));
+    if (req.method === 'GET' && p === '/api/results') return send(res, 200, buildResults(db));
     const m = p.match(/^\/api\/games\/([^/]+)$/);
     if (req.method === 'GET' && m) {
       const g = gameDetail(db, decodeURIComponent(m[1]), book);

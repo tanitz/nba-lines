@@ -162,3 +162,21 @@ test('a poll that fell due while the external scheduler was away is made up, not
   assert.equal(calls, 2);
   assert.equal(at(p.nextOddsAt()), '10-22 01:54');           // ตารางเริ่มนับใหม่จากรอบที่ดึงชดเชย
 });
+
+test('results: closing lines per book + consensus, and games grouped by US Eastern day', async () => {
+  const { buildResults, listDays, etDay } = await import('../src/results.js');
+  const db = openDb(':memory:');
+  const now = new Date('2026-10-25T10:00:00Z');
+  const p = createPoller(db, { poll: { farMin: 1, dayMin: 1, nearMin: 1, closeMin: 1, idleMin: 1, tickSec: 60 }, minCreditsLeft: 0, scoresEveryHours: 0 }, {
+    now: () => new Date('2026-10-22T12:00:00Z'), log: () => {},
+    fetchOdds: async () => ({ data: [event(-5.5, 221.5, 'x')], credits_remaining: 400, credits_used: 2, credits_last: 2 }),
+  });
+  await p.pollOdds();
+  db.prepare('UPDATE games SET home_score = 110, away_score = 100, completed = 1 WHERE id = ?').run('g1');
+  const r = buildResults(db);
+  assert.equal(r.games.length, 1);
+  assert.deepEqual(r.games[0].c.pinnacle, [-5.5, 221.5]);
+  assert.deepEqual(r.games[0].c.consensus, [-5.5, 221.5]);
+  assert.equal(etDay('2026-10-23T00:00:00Z'), '2026-10-22');            // 20:00 ET ยังเป็นวันที่ 22
+  assert.deepEqual(listDays(db, now), [{ d: '2026-10-22', n: 1, done: 1 }]);
+});

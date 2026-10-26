@@ -18,14 +18,14 @@ const out = args.find((a) => !a.startsWith('--')) || path.join(ROOT, 'dist', 'in
 
 const db = demo ? openDb(':memory:') : openDb(config.dbPath);
 if (demo) seedDemo(db);
-const { status, games, details } = buildPayload(db, config, { demo });
+const { status, games, days, byDay, results, details } = buildPayload(db, config, { demo });
 
 const read = (f) => fs.readFileSync(path.join(ROOT, 'public', f), 'utf8');
 const html = read('index.html');
 const body = html.split('<!--APP-START-->')[1].split('<!--APP-END-->')[0];
 const css = read('style.css');
 const js = read('app.js');
-const json = JSON.stringify({ status, games, details }).replace(/</g, '\\u003c');
+const json = JSON.stringify({ status, games, days, byDay, results, details }).replace(/</g, '\\u003c');
 const fonts = 'https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap';
 
 const inner = `<title>NBA Line Tracker</title>

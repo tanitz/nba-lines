@@ -1,4 +1,5 @@
 export const CONSENSUS = 'consensus';
+import { etDay } from './results.js';
 
 const r2 = (v) => Math.round(v * 100) / 100;
 const r3 = (v) => Math.round(v * 1000) / 1000;
@@ -86,10 +87,17 @@ function summarize(points) {
   };
 }
 
-export function listGames(db, { scope = 'upcoming', book = CONSENSUS, now = new Date() } = {}) {
+export function listGames(db, { scope = 'upcoming', book = CONSENSUS, now = new Date(), day = null } = {}) {
   const iso = now.toISOString();
   let games;
-  if (scope === 'recent') {
+  if (scope === 'recent' && day) {
+    // วันแข่งตามเวลาอีสต์ของสหรัฐฯ: ดึงช่วงกว้างพอแล้วกรองด้วยวันที่
+    const d0 = Date.parse(`${day}T03:00:00Z`);
+    games = db.prepare(`SELECT * FROM games WHERE commence_time >= ? AND commence_time < ? AND commence_time <= ?
+                        ORDER BY commence_time`)
+      .all(new Date(d0).toISOString(), new Date(d0 + 29 * 3600_000).toISOString(), iso)
+      .filter((g) => etDay(g.commence_time) === day);
+  } else if (scope === 'recent') {
     games = db.prepare(`SELECT * FROM games WHERE commence_time <= ? AND commence_time > ?
                         ORDER BY commence_time DESC LIMIT 60`)
       .all(iso, new Date(now - 10 * 86400_000).toISOString());

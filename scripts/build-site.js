@@ -1,7 +1,7 @@
 /**
  * สร้างเว็บไซต์แบบไฟล์นิ่ง (เช่น สำหรับ GitHub Pages) จากฐานข้อมูล
  *   node scripts/build-site.js [--demo] [outDir]
- * ได้ไฟล์: index.html, app.js, style.css, data/index.json, data/g/<gameId>.json
+ * ได้ไฟล์: index.html, app.js, style.css, data/index.json, data/results.json, data/d/<วัน>.json, data/g/<gameId>.json
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -14,9 +14,10 @@ import { seedDemo } from '../src/demo.js';
 const safeId = (id) => String(id).replace(/[^A-Za-z0-9_-]/g, '_');
 
 export function buildSite(db, outDir, opts = {}) {
-  const { status, games, details } = buildPayload(db, config, opts);
+  const { status, games, days, byDay, results, details } = buildPayload(db, config, opts);
   fs.rmSync(outDir, { recursive: true, force: true });
   fs.mkdirSync(path.join(outDir, 'data', 'g'), { recursive: true });
+  fs.mkdirSync(path.join(outDir, 'data', 'd'), { recursive: true });
 
   const pub = (f) => path.join(ROOT, 'public', f);
   const html = fs.readFileSync(pub('index.html'), 'utf8')
@@ -28,7 +29,11 @@ export function buildSite(db, outDir, opts = {}) {
   fs.copyFileSync(pub('style.css'), path.join(outDir, 'style.css'));
   fs.writeFileSync(path.join(outDir, '.nojekyll'), '');
 
-  fs.writeFileSync(path.join(outDir, 'data', 'index.json'), JSON.stringify({ status, games }));
+  fs.writeFileSync(path.join(outDir, 'data', 'index.json'), JSON.stringify({ status, games, days }));
+  fs.writeFileSync(path.join(outDir, 'data', 'results.json'), JSON.stringify(results));
+  for (const [d, byBook] of Object.entries(byDay)) {
+    fs.writeFileSync(path.join(outDir, 'data', 'd', `${d}.json`), JSON.stringify(byBook));
+  }
   for (const [id, byBook] of Object.entries(details)) {
     fs.writeFileSync(path.join(outDir, 'data', 'g', `${safeId(id)}.json`), JSON.stringify(byBook));
   }

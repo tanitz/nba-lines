@@ -131,21 +131,42 @@
   }
   const safeId = (id) => String(id).replace(/[^A-Za-z0-9_-]/g, '_');
 
+  const mergeShared = (d, book) => (d?.[book] ? { ...d[book], ...(d._shared ?? {}) } : null);
+  const stamp = (i) => encodeURIComponent(i.status.generatedAt || '');
+  let resultsCache = null;
   const data = {
     status: () => (STATIC ? Promise.resolve(STATIC.status)
       : BASE ? siteIndex().then((i) => i.status)
       : fetchJSON('/api/status')),
-    games: (scope, book) => (STATIC ? Promise.resolve(STATIC.games?.[scope]?.[book] ?? [])
-      : BASE ? siteIndex().then((i) => i.games?.[scope]?.[book] ?? [])
-      : fetchJSON(`/api/games?scope=${scope}&book=${encodeURIComponent(book)}`)),
-    game: (id, book) => (STATIC ? Promise.resolve(STATIC.details?.[id]?.[book] ?? null)
-      : BASE ? siteIndex().then((i) => fetchJSON(`${BASE}g/${safeId(id)}.json?v=${encodeURIComponent(i.status.generatedAt || '')}`))
-        .then((d) => d?.[book] ?? null).catch(() => null)
+    days: () => (STATIC ? Promise.resolve(STATIC.days ?? [])
+      : BASE ? siteIndex().then((i) => i.days ?? [])
+      : fetchJSON('/api/days')),
+    games: (scope, book, day) => {
+      if (STATIC) return Promise.resolve((scope === 'recent' ? STATIC.byDay?.[day] : STATIC.games?.upcoming)?.[book] ?? []);
+      if (!BASE) return fetchJSON(`/api/games?scope=${scope}&book=${encodeURIComponent(book)}${day ? `&day=${day}` : ''}`);
+      return siteIndex().then((i) => (scope === 'recent'
+        ? (day ? fetchJSON(`${BASE}d/${day}.json?v=${stamp(i)}`).then((d) => d?.[book] ?? []) : [])
+        : i.games?.upcoming?.[book] ?? []));
+    },
+    results: () => {
+      if (STATIC) return Promise.resolve(STATIC.results ?? { games: [] });
+      if (resultsCache && Date.now() - resultsCache.at < 60_000) return resultsCache.p;
+      const p = BASE ? siteIndex().then((i) => fetchJSON(`${BASE}results.json?v=${stamp(i)}`)) : fetchJSON('/api/results');
+      resultsCache = { at: Date.now(), p };
+      p.catch(() => { resultsCache = null; });
+      return p;
+    },
+    game: (id, book) => (STATIC ? Promise.resolve(mergeShared(STATIC.details?.[id], book))
+      : BASE ? siteIndex().then((i) => fetchJSON(`${BASE}g/${safeId(id)}.json?v=${stamp(i)}`))
+        .then((d) => mergeShared(d, book)).catch(() => null)
       : fetchJSON(`/api/games/${encodeURIComponent(id)}?book=${encodeURIComponent(book)}`)),
   };
 
   const state = {
     scope: 'upcoming',
+    day: null,
+    days: [],
+    results: null,
     book: null,
     fmt: (() => { const f = store.get('fmt', 'hk'); return FMT_NAME[f] ? f : 'hk'; })(),
     status: null,
@@ -260,6 +281,28 @@
     });
   }
 
+  // ---------- date picker for finished games ----------
+  const dayFmt = new Intl.DateTimeFormat('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
+  const dayFmtLong = new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+  const dayLabel = (d, long) => (long ? dayFmtLong : dayFmt).format(new Date(`${d}T12:00:00Z`));
+  function dayBar() {
+    const days = state.days;
+    const i = days.findIndex((x) => x.d === state.day);
+    const go = (k) => { if (days[k]) { state.day = days[k].d; refresh(); } };
+    const sel = h('select', { id: 'daySelect', 'aria-label': 'Game day' });
+    for (const x of days) {
+      sel.append(h('option', { value: x.d }, `${dayLabel(x.d)} · ${x.n} game${x.n === 1 ? '' : 's'}${x.done < x.n ? ` (${x.done} final)` : ''}`));
+    }
+    sel.value = state.day ?? '';
+    sel.addEventListener('change', () => { state.day = sel.value; refresh(); });
+    const cur = days[i];
+    return h('div', { class: 'daybar' },
+      h('button', { type: 'button', class: 'nav', disabled: i < 0 || i >= days.length - 1, onclick: () => go(i + 1), 'aria-label': 'Previous day' }, '‹ Older'),
+      h('label', { class: 'field' }, h('span', null, 'Game day (US Eastern)'), sel),
+      h('button', { type: 'button', class: 'nav', disabled: i <= 0, onclick: () => go(i - 1), 'aria-label': 'Next day' }, 'Newer ›'),
+      cur && cur.done < cur.n ? h('span', { class: 'note' }, 'Final scores arrive up to a day after the game.') : null);
+  }
+
   function renderBoard() {
     const view = $('#view');
     view.replaceChildren();
@@ -269,10 +312,11 @@
     }
     const games = state.games;
     const final = state.scope === 'recent';
+    if (final) view.append(dayBar());
     if (!games.length) {
       const s = state.status;
       view.append(h('div', { class: 'empty' },
-        h('strong', null, final ? 'No finished games in the last 10 days' : 'No upcoming games with odds yet'),
+        h('strong', null, final ? (state.days.length ? 'No games on this day' : 'No games have started yet') : 'No upcoming games with odds yet'),
         s && !s.hasKey && !s.demo
           ? 'Add ODDS_API_KEY and the tracker will start fetching odds automatically.'
           : 'Games appear here as soon as bookmakers post lines. The off-season may have none.'));
@@ -298,11 +342,11 @@
     let lastDay = null;
     for (const g of games) {
       const d = new Date(g.commence);
-      const key = T.dayKey.format(d);
+      const key = final ? state.day : T.dayKey.format(d);
       if (key !== lastDay) {
         lastDay = key;
         tbody.append(h('tr', { class: 'day' }, h('th', { colspan: String(cols), scope: 'rowgroup' },
-          h('span', null, T.day.format(d)))));
+          h('span', null, final ? `Game day ${dayLabel(state.day, true)} (US Eastern)` : T.day.format(d)))));
       }
       const sp = g.spreads;
       const tt = g.totals;
@@ -542,6 +586,97 @@
       tb));
   }
 
+  // ---------- team form: record against the closing lines ----------
+  /** One row per finished game of `team` before `before`, newest first, with the result against that game's closing line. */
+  function teamGames(team, before) {
+    const out = [];
+    for (const r of state.results?.games ?? []) {
+      if (r.t >= before || (r.h !== team && r.a !== team)) continue;
+      const c = r.c[state.book] ?? r.c[CONSENSUS];
+      const home = r.h === team;
+      let ats = null;
+      let ou = null;
+      if (c?.[0] != null) {
+        const v = (r.hs - r.as) + c[0];                       // > 0: home team covered
+        const tv = home ? v : -v;
+        ats = tv > 0 ? 'W' : tv < 0 ? 'L' : 'P';
+      }
+      if (c?.[1] != null) {
+        const sum = r.hs + r.as;
+        ou = sum > c[1] ? 'O' : sum < c[1] ? 'U' : 'P';
+      }
+      out.push({ home, ats, ou });
+    }
+    return out.reverse();
+  }
+  const tally = (rows, key, a, b) => {
+    let x = 0; let y = 0; let p = 0; let n = 0;
+    for (const r of rows) {
+      const v = r[key];
+      if (!v) continue;
+      n++;
+      if (v === a) x++; else if (v === b) y++; else p++;
+    }
+    return { x, y, p, n };
+  };
+  const rec = (t) => (t.n ? `${t.x}-${t.y}${t.p ? `-${t.p}` : ''}` : null);
+  /** % cell, tinted green when above 50% and red when below (needs at least 3 games). */
+  const pctCell = (t, tint = true) => {
+    if (!t.n) return td(null);
+    const pct = Math.round((t.x / (t.x + t.y || 1)) * 100);
+    return td(t.x + t.y ? `${pct}%` : null, { dir: tint && t.n >= 3 && t.x + t.y ? (pct > 50 ? 'up' : pct < 50 ? 'down' : null) : null });
+  };
+  const strip = (rows, key, a, b, cls) => h('span', { class: 'strip' }, rows.slice(0, 10).map((r) => {
+    const v = r[key];
+    return h('i', { class: v === a ? cls[0] : v === b ? cls[1] : 'p', title: v === a ? a : v === b ? b : 'Push' }, v ?? '·');
+  }));
+
+  function formSection(g, tip) {
+    const res = state.results;
+    const first = res?.first ? T.day.format(new Date(res.first)) : null;
+    const rowsFor = (team, home) => {
+      const all = teamGames(team, g.commence);
+      const venue = all.filter((r) => r.home === home);
+      return { all, sets: [['Last 10', all.slice(0, 10)], ['Last 20', all.slice(0, 20)], ['Season', all],
+        [home ? 'Season at home' : 'Season on the road', venue]] };
+    };
+    const block = (team, home) => {
+      const { all, sets } = rowsFor(team, home);
+      const body = sets.map(([label, rows]) => {
+        const a = tally(rows, 'ats', 'W', 'L');
+        const o = tally(rows, 'ou', 'O', 'U');
+        const short = label.startsWith('Last') && rows.length < Number(label.slice(5));
+        return h('tr', null,
+          h('th', { scope: 'row' }, label),
+          td(rows.length ? (short ? `${rows.length} (all)` : String(rows.length)) : '0', { cls: 'muted' }),
+          td(rec(a), { cls: 'gs' }), pctCell(a),
+          td(rec(o), { cls: 'gs' }), pctCell(o, false));
+      });
+      return h('div', { class: 'form-team' },
+        h('h4', null, team, h('small', null, home ? 'Home' : 'Away')),
+        h('div', { class: 'table-wrap' }, h('table', { class: 'form' },
+          h('thead', null,
+            h('tr', { class: 'grp' }, h('th', { rowspan: '2' }, 'Period'), h('th', { rowspan: '2' }, 'Games'),
+              h('th', { colspan: '2', class: 'g' }, 'Against the spread'), h('th', { colspan: '2', class: 'g' }, 'Over / Under')),
+            h('tr', null, h('th', { class: 'gs' }, 'W-L-P'), h('th', null, 'Cover %'), h('th', { class: 'gs' }, 'O-U-P'), h('th', null, 'Over %'))),
+          h('tbody', null, body))),
+        all.length ? h('p', { class: 'strips' },
+          h('span', null, 'Last 10, newest first'),
+          h('span', null, 'ATS ', strip(all, 'ats', 'W', 'L', ['w', 'l'])),
+          h('span', null, 'O/U ', strip(all, 'ou', 'O', 'U', ['o', 'u']))) : null);
+    };
+    const note = !res || !res.games.length
+      ? 'No finished games with closing lines are stored yet, so there are no records to show.'
+      : `Counts only games this tracker stored (since ${first}), so early-season samples are small; “(all)” means fewer games than the period asks for.`;
+    return h('section', { class: 'block' },
+      h('h3', null, Date.now() >= tip ? 'Team form going into this game' : 'Team form'),
+      h('p', { class: 'legend' },
+        'Each team’s results against the closing line of the selected bookmaker. ',
+        'ATS: W = the team covered the spread, L = it did not, P = push. O/U: O = total points went over the line, U = under. ',
+        note),
+      h('div', { class: 'form-grid' }, block(g.away, false), block(g.home, true)));
+  }
+
   function renderSheet() {
     const view = $('#view');
     destroyCharts();
@@ -626,7 +761,7 @@
       hist.length > LIMIT ? h('button', { type: 'button', class: 'more', onclick: () => { state.showAll = !state.showAll; renderSheet(); } },
         state.showAll ? 'Show latest 40 only' : `Show all ${hist.length} rows`) : null);
 
-    view.append(h('div', { class: 'sheet' }, back, head, summary, charts, books, history));
+    view.append(h('div', { class: 'sheet' }, back, head, summary, formSection(g, tip), charts, books, history));
 
     if (!window.Chart) {
       charts.replaceChildren(h('h3', null, 'Charts'), h('p', { class: 'muted' }, 'The chart library did not load. All values are in the tables.'));
@@ -670,8 +805,15 @@
       const books = new Set([CONSENSUS, ...(state.status.bookmakers ?? []).map((b) => b.key)]);
       if (!state.book) state.book = store.get('book', null) || state.status.defaultBook || CONSENSUS;
       if (!books.has(state.book)) state.book = CONSENSUS;
-      if (state.gameId) state.detail = await data.game(state.gameId, state.book);
-      else state.games = await data.games(state.scope, state.book);
+      if (state.gameId) {
+        [state.detail, state.results] = await Promise.all([data.game(state.gameId, state.book), data.results().catch(() => null)]);
+      } else if (state.scope === 'recent') {
+        state.days = await data.days();
+        if (!state.days.some((x) => x.d === state.day)) state.day = state.days[0]?.d ?? null;
+        state.games = state.day ? await data.games('recent', state.book, state.day) : [];
+      } else {
+        state.games = await data.games('upcoming', state.book);
+      }
       state.error = null;
     } catch (e) {
       state.error = e.message;
