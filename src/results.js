@@ -17,28 +17,34 @@ function median(xs) {
   return Math.round((n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2) * 100) / 100;
 }
 
-/** รายการแมตช์ที่จบแล้วพร้อมราคาปิด: { first, games: [{id,t,h,a,hs,as,c:{book:[spread,total]}}] } */
+/**
+ * รายการแมตช์ที่จบแล้วพร้อมราคา:
+ * { first, games: [{id,t,h,a,hs,as,c:{book:[spreadClose,totalClose,spreadOpen,totalOpen]}}] }
+ * spread เป็นแต้มต่อของทีมเหย้า
+ */
 export function buildResults(db) {
   const games = db.prepare(`
     SELECT id, commence_time, home_team, away_team, home_score, away_score FROM games
     WHERE completed = 1 AND home_score IS NOT NULL ORDER BY commence_time`).all();
   const close = new Map();
-  const rows = db.prepare(`
+  const pick = (agg) => db.prepare(`
     SELECT s.game_id, s.bookmaker, s.market, s.line FROM snapshots s
-    JOIN (SELECT MAX(id) AS mid FROM snapshots GROUP BY game_id, bookmaker, market) m ON s.id = m.mid
+    JOIN (SELECT ${agg}(id) AS mid FROM snapshots GROUP BY game_id, bookmaker, market) m ON s.id = m.mid
     JOIN games g ON g.id = s.game_id WHERE g.completed = 1`).all();
-  for (const r of rows) {
-    if (!close.has(r.game_id)) close.set(r.game_id, new Map());
-    const byBook = close.get(r.game_id);
-    if (!byBook.has(r.bookmaker)) byBook.set(r.bookmaker, [null, null]);
-    byBook.get(r.bookmaker)[r.market === 'spreads' ? 0 : 1] = r.line;
+  for (const [agg, off] of [['MAX', 0], ['MIN', 2]]) {
+    for (const r of pick(agg)) {
+      if (!close.has(r.game_id)) close.set(r.game_id, new Map());
+      const byBook = close.get(r.game_id);
+      if (!byBook.has(r.bookmaker)) byBook.set(r.bookmaker, [null, null, null, null]);
+      byBook.get(r.bookmaker)[off + (r.market === 'spreads' ? 0 : 1)] = r.line;
+    }
   }
   const out = games.map((g) => {
     const byBook = close.get(g.id) ?? new Map();
     const c = {};
     for (const [b, v] of byBook) c[b] = v;
     const all = [...byBook.values()];
-    if (all.length) c[CONSENSUS] = [median(all.map((v) => v[0])), median(all.map((v) => v[1]))];
+    if (all.length) c[CONSENSUS] = [0, 1, 2, 3].map((k) => median(all.map((v) => v[k])));
     return { id: g.id, t: g.commence_time, h: g.home_team, a: g.away_team, hs: g.home_score, as: g.away_score, c };
   });
   const first = db.prepare('SELECT MIN(commence_time) AS t FROM games').get()?.t ?? null;

@@ -175,8 +175,8 @@ test('results: closing lines per book + consensus, and games grouped by US Easte
   db.prepare('UPDATE games SET home_score = 110, away_score = 100, completed = 1 WHERE id = ?').run('g1');
   const r = buildResults(db);
   assert.equal(r.games.length, 1);
-  assert.deepEqual(r.games[0].c.pinnacle, [-5.5, 221.5]);
-  assert.deepEqual(r.games[0].c.consensus, [-5.5, 221.5]);
+  assert.deepEqual(r.games[0].c.pinnacle, [-5.5, 221.5, -5.5, 221.5]);
+  assert.deepEqual(r.games[0].c.consensus, [-5.5, 221.5, -5.5, 221.5]);
   assert.equal(etDay('2026-10-23T00:00:00Z'), '2026-10-22');            // 20:00 ET ยังเป็นวันที่ 22
   assert.deepEqual(listDays(db, now), [{ d: '2026-10-22', n: 1, done: 1 }]);
 });

@@ -164,6 +164,7 @@
 
   const state = {
     scope: 'upcoming',
+    team: null,
     day: null,
     days: [],
     results: null,
@@ -237,7 +238,7 @@
     for (const b of state.status?.bookmakers ?? []) sel.append(h('option', { value: b.key }, b.title));
     sel.value = state.book;
     $('#fmtSelect').value = state.fmt;
-    $('#scopeTabs').hidden = !!state.gameId;
+    $('#scopeTabs').hidden = !!(state.gameId || state.team);
   }
 
   // ---------- results vs closing line ----------
@@ -341,7 +342,7 @@
       ou.length ? h('span', null, 'Overs ', h('b', null, `${overs}`), ' · Unders ', h('b', null, `${ou.length - overs}`)) : null) : null;
 
     const teamRow = (name, score, win) => h('div', { class: `rc-team${win ? ' win' : ''}` },
-      h('span', { class: 'ab' }, ab(name)), h('span', { class: 'nm' }, name), h('span', { class: 'sc' }, score ?? '–'));
+      h('span', { class: 'ab' }, ab(name)), h('span', { class: 'nm' }, teamLink(name)), h('span', { class: 'sc' }, score ?? '–'));
     const moved = (open, close, f) => (open != null && close != null && open !== close ? `opened ${f(open)}` : 'no move');
 
     const cards = rows.map(({ g, o }) => {
@@ -740,7 +741,7 @@
           td(rec(o), { cls: 'gs' }), pctCell(o, false));
       });
       return h('div', { class: 'form-team' },
-        h('h4', null, team, h('small', null, home ? 'Home' : 'Away')),
+        h('h4', null, teamLink(team), h('small', null, home ? 'Home' : 'Away')),
         h('div', { class: 'table-wrap' }, h('table', { class: 'form' },
           h('thead', null,
             h('tr', { class: 'grp' }, h('th', { rowspan: '2' }, 'Period'), h('th', { rowspan: '2' }, 'Games'),
@@ -764,6 +765,183 @@
       h('div', { class: 'form-grid' }, block(g.away, false), block(g.home, true)));
   }
 
+  // ---------- teams ----------
+  /** Clickable team name that opens the team page. */
+  function teamLink(name, label = name) {
+    return h('button', { type: 'button', class: 'teamlink', title: `${name}: season stats`,
+      onclick: (e) => { e.stopPropagation(); openTeam(name); } }, label);
+  }
+  const signedN = (v) => (v > 0 ? `+${num(v)}` : v < 0 ? `−${num(-v)}` : '0');
+  const avg = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
+  const oneDec = (v) => (v == null ? '–' : (Math.round(v * 10) / 10).toFixed(1));
+
+  /** Every finished game of a team, oldest first, from the team's point of view. */
+  function teamLog(team) {
+    const out = [];
+    for (const r of state.results?.games ?? []) {
+      if (r.h !== team && r.a !== team) continue;
+      const c = r.c[state.book] ?? r.c[CONSENSUS] ?? [];
+      const home = r.h === team;
+      const pf = home ? r.hs : r.as;
+      const pa = home ? r.as : r.hs;
+      const flip = (v) => (v == null ? null : home ? v : -v);
+      const line = flip(c[0]);                    // the team's own handicap, e.g. -6.5 = gave 6.5
+      const open = flip(c[2]);
+      const cover = line == null ? null : pf - pa + line;
+      const sum = pf + pa;
+      const ouBy = c[1] == null ? null : sum - c[1];
+      out.push({
+        id: r.id, t: r.t, home, opp: home ? r.a : r.h, pf, pa, won: pf > pa,
+        line, open, cover, ats: cover == null ? null : cover > 0 ? 'W' : cover < 0 ? 'L' : 'P',
+        total: c[1], totalOpen: c[3], sum, ouBy, ou: ouBy == null ? null : ouBy > 0 ? 'O' : ouBy < 0 ? 'U' : 'P',
+        g: { home: r.h, away: r.a },
+      });
+    }
+    return out;
+  }
+  function splitRow(label, rows) {
+    const a = tally(rows, 'ats', 'W', 'L');
+    const o = tally(rows, 'ou', 'O', 'U');
+    const w = rows.filter((r) => r.won).length;
+    const pct = (t) => (t.x + t.y ? `${Math.round((t.x / (t.x + t.y)) * 100)}%` : null);
+    const tint = (t) => (t.n >= 3 && t.x + t.y ? (t.x > t.y ? 'up' : t.x < t.y ? 'down' : null) : null);
+    return h('tr', null,
+      h('th', { scope: 'row' }, label, h('small', null, `${rows.length} game${rows.length === 1 ? '' : 's'}`)),
+      td(rows.length ? `${w}-${rows.length - w}` : null, { cls: 'gs' }),
+      td(rec(a), { cls: 'gs', dir: tint(a), sub: pct(a) }),
+      td(rec(o), { cls: 'gs', sub: o.x + o.y ? `${pct(o)} over` : null }),
+      td(rows.length ? `${oneDec(avg(rows.map((r) => r.pf)))}–${oneDec(avg(rows.map((r) => r.pa)))}` : null, { cls: 'gs' }));
+  }
+
+  function renderTeams() {
+    const view = $('#view');
+    view.replaceChildren();
+    if (state.error) { view.append(h('div', { class: 'empty' }, h('strong', null, 'Could not load data'), state.error)); return; }
+    const names = new Set();
+    for (const r of state.results?.games ?? []) { names.add(r.h); names.add(r.a); }
+    for (const g of state.upcoming ?? []) { names.add(g.home); names.add(g.away); }
+    const teams = [...names].sort();
+    if (!teams.length) { view.append(h('div', { class: 'empty' }, h('strong', null, 'No teams yet'), 'Teams appear once games have odds.')); return; }
+    const tb = h('tbody');
+    for (const t of teams) {
+      const rows = teamLog(t);
+      const a = tally(rows, 'ats', 'W', 'L');
+      const o = tally(rows, 'ou', 'O', 'U');
+      const w = rows.filter((r) => r.won).length;
+      tb.append(h('tr', { class: 'game', onclick: () => openTeam(t) },
+        h('th', { scope: 'row', class: 'sticky' }, h('span', { class: 'tab-ab' }, ab(t)), teamLink(t)),
+        td(String(rows.length), { cls: 'muted' }),
+        td(rows.length ? `${w}-${rows.length - w}` : null, { cls: 'gs' }),
+        td(rec(a), { cls: 'gs' }),
+        td(rec(o), { cls: 'gs' })));
+    }
+    view.append(
+      h('p', { class: 'hint' }, 'Tap a team for its games, home and road splits, line movement and results against the spread.'),
+      h('div', { class: 'table-wrap narrow' }, h('table', { class: 'teams' },
+        h('thead', null, h('tr', null, h('th', { class: 'sticky' }, 'Team'), h('th', null, 'Games'), h('th', { class: 'gs' }, 'Won-Lost'),
+          h('th', { class: 'gs', title: 'Against the spread: covered-failed-push' }, 'Spread W-L-P'), h('th', { class: 'gs', title: 'Over-Under-Push' }, 'Total O-U-P'))),
+        tb)),
+      h('p', { class: 'legend' }, `Records count games stored by this tracker (since ${state.results?.first ? T.day.format(new Date(state.results.first)) : '–'}) against the closing line of the selected bookmaker.`));
+  }
+
+  function renderTeam() {
+    const view = $('#view');
+    view.replaceChildren();
+    const team = state.team;
+    const back = h('button', { type: 'button', class: 'back', onclick: closeTeam }, '← Back');
+    if (state.error) { view.append(h('div', { class: 'sheet' }, back, h('div', { class: 'empty' }, h('strong', null, 'Could not load data'), state.error))); return; }
+    const log = teamLog(team);
+    const rows = [...log].reverse();                               // newest first
+    const w = log.filter((r) => r.won).length;
+    const a = tally(log, 'ats', 'W', 'L');
+    const o = tally(log, 'ou', 'O', 'U');
+    const tile = (big, label, sub) => h('div', { class: 'tile' }, h('b', null, big), h('span', null, label), sub ? h('small', null, sub) : null);
+    const bookTitle = state.book === CONSENSUS ? 'market consensus'
+      : (state.status?.bookmakers?.find((b) => b.key === state.book)?.title ?? state.book);
+
+    const head = h('header', { class: 'sheet-head' },
+      h('h2', null, ab(team)), h('p', { class: 'teams' }, team),
+      h('p', { class: 'teams' }, `Lines from ${bookTitle} · games stored since ${state.results?.first ? T.day.format(new Date(state.results.first)) : '–'}`));
+
+    const tiles = h('div', { class: 'tiles' },
+      tile(String(log.length), 'Games played', `${log.filter((r) => r.home).length} home · ${log.filter((r) => !r.home).length} road`),
+      tile(log.length ? `${w}-${log.length - w}` : '–', 'Won-Lost'),
+      tile(a.n ? `${a.x}-${a.y}${a.p ? `-${a.p}` : ''}` : '–', 'Against the spread', a.n ? `covered ${a.x} of ${a.n}` : null),
+      tile(o.n ? `${o.x}-${o.y}${o.p ? `-${o.p}` : ''}` : '–', 'Over-Under', o.n ? `${o.x} over, ${o.y} under` : null),
+      tile(log.length ? `${oneDec(avg(log.map((r) => r.pf)))}` : '–', 'Points scored / game', log.length ? `allowed ${oneDec(avg(log.map((r) => r.pa)))}` : null),
+      tile(a.n ? signedN(Math.round(avg(log.filter((r) => r.cover != null).map((r) => r.cover)) * 10) / 10) : '–', 'Avg vs the spread',
+        'points beyond the line per game'));
+
+    const splits = h('section', { class: 'block' },
+      h('h3', null, 'Splits'),
+      h('div', { class: 'table-wrap narrow' }, h('table', { class: 'splits' },
+        h('thead', null, h('tr', null, h('th', null, ''), h('th', { class: 'gs' }, 'W-L'),
+          h('th', { class: 'gs', title: 'Against the spread: covered-missed-push' }, 'Spread'), h('th', { class: 'gs', title: 'Over-Under-Push' }, 'Total'), h('th', { class: 'gs' }, 'Avg score'))),
+        h('tbody', null,
+          splitRow('All games', log),
+          splitRow('Last 10', rows.slice(0, 10)),
+          splitRow('Last 20', rows.slice(0, 20)),
+          splitRow('Home', log.filter((r) => r.home)),
+          splitRow('Road', log.filter((r) => !r.home)),
+          splitRow('As favourite', log.filter((r) => r.line != null && r.line < 0)),
+          splitRow('As underdog', log.filter((r) => r.line != null && r.line > 0))))),
+      h('p', { class: 'legend' }, 'W-L: games won and lost. Spread: covered / missed / push (green when covering more often, red when less, from 3 games). Total: over / under / push. Avg score = points for – points against.'));
+
+    // game log, newest first
+    const tag = (cls, text) => h('span', { class: `chip-r ${cls}` }, text);
+    const logList = h('div', { class: 'log' }, rows.map((r) => {
+      const d = new Date(r.t);
+      const lineTxt = r.line == null ? '–' : r.line === 0 ? 'PK' : signedN(r.line);
+      const moved = r.open != null && r.line != null && r.open !== r.line
+        ? `opened ${r.open === 0 ? 'PK' : signedN(r.open)} · ${r.line < r.open ? `market moved toward ${ab(team)}` : `market moved against ${ab(team)}`}`
+        : 'line did not move';
+      const totMoved = r.totalOpen != null && r.total != null && r.totalOpen !== r.total ? `opened ${num(r.totalOpen)}` : 'did not move';
+      return h('article', { class: 'log-row', tabindex: '0', onclick: () => openGame(r.id), onkeydown: (e) => { if (e.key === 'Enter') openGame(r.id); } },
+        h('div', { class: 'log-top' },
+          h('span', { class: 'when' }, T.day.format(d)),
+          h('span', { class: 'vs' }, r.home ? 'vs ' : '@ ', teamLink(r.opp, ab(r.opp)), h('small', null, r.home ? ' home' : ' road')),
+          h('span', { class: `wl ${r.won ? 'w' : 'l'}` }, `${r.won ? 'W' : 'L'} ${r.pf}–${r.pa}`)),
+        h('dl', { class: 'rc-lines' },
+          h('div', null, h('dt', null, 'Spread'), h('dd', null,
+            h('span', { class: 'ln' }, `${ab(team)} ${lineTxt}`), h('small', null, r.line == null ? '' : moved),
+            h('div', { class: 'res' },
+              h('span', { class: 'calc' }, r.pf === r.pa ? 'Tied' : `${r.won ? 'Won' : 'Lost'} by ${Math.abs(r.pf - r.pa)}`),
+              r.ats == null ? tag('pend', 'No line') : r.ats === 'P' ? tag('push', 'Push')
+                : tag(r.ats === 'W' ? 'cov' : 'miss', r.ats === 'W' ? `Covered by ${num(r.cover)}` : `Missed by ${num(-r.cover)}`)))),
+          h('div', null, h('dt', null, 'Total'), h('dd', null,
+            h('span', { class: 'ln' }, r.total == null ? '–' : num(r.total)), h('small', null, r.total == null ? '' : totMoved),
+            h('div', { class: 'res' },
+              h('span', { class: 'calc' }, `Total scored ${r.sum}`),
+              r.ou == null ? tag('pend', 'No line') : r.ou === 'P' ? tag('push', 'Push')
+                : tag(r.ou === 'O' ? 'over' : 'under', `${r.ou === 'O' ? 'Over' : 'Under'} by ${num(Math.abs(r.ouBy))}`))))));
+    }));
+
+    const next = (state.upcoming ?? []).filter((g) => g.home === team || g.away === team).slice(0, 3);
+    const upcoming = next.length ? h('section', { class: 'block' },
+      h('h3', null, 'Next games'),
+      h('div', { class: 'log' }, next.map((g) => {
+        const home = g.home === team;
+        const d = new Date(g.commence);
+        return h('article', { class: 'log-row', tabindex: '0', onclick: () => openGame(g.id) },
+          h('div', { class: 'log-top' },
+            h('span', { class: 'when' }, `${T.day.format(d)}, ${T.time.format(d)}`),
+            h('span', { class: 'vs' }, home ? 'vs ' : '@ ', teamLink(home ? g.away : g.home, ab(home ? g.away : g.home)), h('small', null, home ? ' home' : ' road')),
+            h('span', { class: 'wl' }, rel(g.commence))),
+          h('p', { class: 'next-lines' },
+            !g.spreads && !g.totals ? h('small', null, 'No line posted yet by this bookmaker') : null,
+            g.spreads ? `Spread ${spreadText(g.spreads.now.line, g)}` : null,
+            g.spreads && g.spreads.delta ? h('small', null, ` (opened ${spreadText(g.spreads.open.line, g)})`) : null,
+            g.totals ? `${g.spreads ? ' · ' : ''}Total ${num(g.totals.now.line)}` : null,
+            g.totals && g.totals.delta ? h('small', null, ` (opened ${num(g.totals.open.line)})`) : null));
+      }))) : null;
+
+    view.append(h('div', { class: 'sheet' }, back, head, tiles, upcoming, splits,
+      h('section', { class: 'block' },
+        h('h3', null, `Game log (${rows.length})`),
+        h('p', { class: 'legend' }, `Newest first. Spread is ${ab(team)}'s own handicap at the close (−6.5 = gave 6.5 points). Tap a game for its price charts.`),
+        rows.length ? logList : h('div', { class: 'empty' }, h('strong', null, 'No finished games stored yet')))));
+  }
+
   function renderSheet() {
     const view = $('#view');
     destroyCharts();
@@ -785,7 +963,7 @@
     // header
     const head = h('header', { class: 'sheet-head' },
       h('h2', null, ab(g.away), h('span', { class: 'at' }, ' @ '), ab(g.home)),
-      h('p', { class: 'teams' }, `${g.away} at ${g.home}`),
+      h('p', { class: 'teams' }, teamLink(g.away), ' at ', teamLink(g.home)),
       h('p', { class: 'tip' },
         h('span', null, `${T.day.format(new Date(tip))}, ${T.time.format(new Date(tip))}`),
         started ? h('span', { class: 'pill' }, g.score?.completed ? 'Final' : 'Started')
@@ -883,7 +1061,13 @@
   function render() {
     renderStatus();
     renderFilters();
-    if (state.gameId) renderSheet(); else { destroyCharts(); renderBoard(); }
+    if (state.gameId) renderSheet();
+    else {
+      destroyCharts();
+      if (state.team) renderTeam();
+      else if (state.scope === 'teams') renderTeams();
+      else renderBoard();
+    }
   }
 
   async function refresh() {
@@ -894,6 +1078,8 @@
       if (!books.has(state.book)) state.book = CONSENSUS;
       if (state.gameId) {
         [state.detail, state.results] = await Promise.all([data.game(state.gameId, state.book), data.results().catch(() => null)]);
+      } else if (state.team || state.scope === 'teams') {
+        [state.results, state.upcoming] = await Promise.all([data.results(), data.games('upcoming', state.book).catch(() => [])]);
       } else if (state.scope === 'recent') {
         state.days = await data.days();
         if (!state.days.some((x) => x.d === state.day)) state.day = state.days[0]?.d ?? null;
@@ -917,8 +1103,35 @@
   function closeGame() {
     state.gameId = null;
     state.detail = null;
-    if (!STATIC && location.hash) history.pushState('', document.title, location.pathname + location.search);
-    refresh();
+    setHash(state.team ? `team-${encodeURIComponent(state.team)}` : '');
+    refresh().then(() => window.scrollTo({ top: 0 }));
+  }
+  function openTeam(name) {
+    state.team = name;
+    state.gameId = null;
+    state.detail = null;
+    setHash(`team-${encodeURIComponent(name)}`);
+    refresh().then(() => window.scrollTo({ top: 0 }));
+  }
+  function closeTeam() {
+    state.team = null;
+    setHash('');
+    refresh().then(() => window.scrollTo({ top: 0 }));
+  }
+  function setHash(hh) {
+    if (STATIC) return;
+    if (hh) { if (location.hash !== `#${hh}`) location.hash = hh; } else if (location.hash) history.pushState('', document.title, location.pathname + location.search);
+  }
+  /** Reads #game-<id> / #team-<name> into state; returns true when something changed. */
+  function route() {
+    const g = location.hash.match(/^#game-(.+)$/);
+    const t = location.hash.match(/^#team-(.+)$/);
+    const gameId = g ? decodeURIComponent(g[1]) : null;
+    const team = t ? decodeURIComponent(t[1]) : (g ? state.team : null);
+    const changed = gameId !== state.gameId || team !== state.team;
+    state.gameId = gameId;
+    state.team = team;
+    return changed;
   }
 
   // ---------- start ----------
@@ -931,13 +1144,8 @@
   $('#tokenInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') pollNow(); });
 
   if (!STATIC) {
-    window.addEventListener('hashchange', () => {
-      const m = location.hash.match(/^#game-(.+)$/);
-      const id = m ? decodeURIComponent(m[1]) : null;
-      if (id !== state.gameId) { state.gameId = id; refresh(); }
-    });
-    const m = location.hash.match(/^#game-(.+)$/);
-    if (m) state.gameId = decodeURIComponent(m[1]);
+    window.addEventListener('hashchange', () => { if (route()) refresh(); });
+    route();
     setInterval(() => { if (document.visibilityState === 'visible') refresh(); }, 60_000);
   }
 
