@@ -303,6 +303,89 @@
       cur && cur.done < cur.n ? h('span', { class: 'note' }, 'Final scores arrive up to a day after the game.') : null);
   }
 
+  // ---------- finished games: one easy-to-read card per game, all maths done ----------
+  /** Everything a finished game needs, computed against the closing line. */
+  function outcome(g) {
+    const L = g.spreads?.now.line ?? null;
+    const T0 = g.totals?.now.line ?? null;
+    const done = !!g.score?.completed;
+    const o = { L, T: T0, openL: g.spreads?.open.line ?? null, openT: g.totals?.open.line ?? null, done };
+    if (!done) return o;
+    const hs = g.score.home;
+    const as = g.score.away;
+    o.margin = hs - as;
+    o.sum = hs + as;
+    o.winner = hs > as ? g.home : g.away;
+    if (L != null) {
+      const v = o.margin + L;                                   // > 0: home covered
+      o.ats = v === 0 ? { push: true } : { team: v > 0 ? g.home : g.away, by: Math.abs(v) };
+      if (L !== 0 && v !== 0) o.favCovered = (L < 0) === (v > 0);
+    }
+    if (T0 != null) {
+      const d = o.sum - T0;
+      o.ou = d === 0 ? { push: true } : { side: d > 0 ? 'Over' : 'Under', by: Math.abs(d) };
+    }
+    return o;
+  }
+
+  function resultCards(games) {
+    const rows = games.map((g) => ({ g, o: outcome(g) }));
+    const done = rows.filter((r) => r.o.done);
+    const fav = done.filter((r) => r.o.favCovered != null);
+    const favW = fav.filter((r) => r.o.favCovered).length;
+    const ou = done.filter((r) => r.o.ou && !r.o.ou.push);
+    const overs = ou.filter((r) => r.o.ou.side === 'Over').length;
+    const summary = done.length ? h('div', { class: 'day-sum' },
+      h('span', null, h('b', null, `${done.length}`), ` of ${games.length} games final`),
+      fav.length ? h('span', null, 'Favourites covered ', h('b', null, `${favW} of ${fav.length}`)) : null,
+      ou.length ? h('span', null, 'Overs ', h('b', null, `${overs}`), ' · Unders ', h('b', null, `${ou.length - overs}`)) : null) : null;
+
+    const teamRow = (name, score, win) => h('div', { class: `rc-team${win ? ' win' : ''}` },
+      h('span', { class: 'ab' }, ab(name)), h('span', { class: 'nm' }, name), h('span', { class: 'sc' }, score ?? '–'));
+    const moved = (open, close, f) => (open != null && close != null && open !== close ? `opened ${f(open)}` : 'no move');
+
+    const cards = rows.map(({ g, o }) => {
+      const tip = new Date(g.commence);
+      const sc = g.score;
+      const spreadRes = !o.done ? h('span', { class: 'chip-r pend' }, 'Result pending')
+        : !o.ats ? h('span', { class: 'chip-r pend' }, 'No line')
+          : o.ats.push ? h('span', { class: 'chip-r push' }, 'Push (exactly on the line)')
+            : h('span', { class: `chip-r ${o.ats.team === g.home ? 'home' : 'away'}` }, `${ab(o.ats.team)} covered by ${num(o.ats.by)}`);
+      const totalRes = !o.done ? h('span', { class: 'chip-r pend' }, 'Result pending')
+        : !o.ou ? h('span', { class: 'chip-r pend' }, 'No line')
+          : o.ou.push ? h('span', { class: 'chip-r push' }, 'Push (exactly on the line)')
+            : h('span', { class: `chip-r ${o.ou.side === 'Over' ? 'over' : 'under'}` }, `${o.ou.side} by ${num(o.ou.by)}`);
+      return h('article', { class: 'rc', tabindex: '0', onclick: () => openGame(g.id),
+        onkeydown: (e) => { if (e.key === 'Enter') openGame(g.id); } },
+        h('div', { class: 'rc-head' },
+          h('span', null, T.time.format(tip), ' · ', T.day.format(tip)),
+          h('span', { class: `pill${o.done ? '' : ' live'}` }, o.done ? 'Final' : (sc ? 'Live' : 'Awaiting score'))),
+        h('div', { class: 'rc-score' },
+          teamRow(g.away, sc?.away, o.done && o.winner === g.away),
+          teamRow(g.home, sc?.home, o.done && o.winner === g.home)),
+        h('dl', { class: 'rc-lines' },
+          h('div', null,
+            h('dt', null, 'Spread'),
+            h('dd', null,
+              h('span', { class: 'ln' }, o.L == null ? '–' : spreadText(o.L, g)),
+              h('small', null, o.L == null ? '' : moved(o.openL, o.L, (x) => spreadText(x, g))),
+              h('div', { class: 'res' }, o.done ? h('span', { class: 'calc' }, `${ab(o.winner)} won by ${Math.abs(o.margin)}`) : null, spreadRes))),
+          h('div', null,
+            h('dt', null, 'Total'),
+            h('dd', null,
+              h('span', { class: 'ln' }, o.T == null ? '–' : num(o.T)),
+              h('small', null, o.T == null ? '' : moved(o.openT, o.T, num)),
+              h('div', { class: 'res' }, o.done ? h('span', { class: 'calc' }, `Total scored ${o.sum}`) : null, totalRes)))),
+        h('p', { class: 'rc-more' }, 'Tap for price charts and odds history ›'));
+    });
+    return [
+      summary,
+      h('div', { class: 'rc-grid' }, cards),
+      h('p', { class: 'legend' }, 'Lines are the closing prices of the selected bookmaker (the last price stored before tip-off). ',
+        '“Covered by” = how many points the team beat the spread by; “Over/Under by” = points above or below the total line.'),
+    ];
+  }
+
   function renderBoard() {
     const view = $('#view');
     view.replaceChildren();
@@ -324,6 +407,8 @@
           : 'Games appear here as soon as bookmakers post lines. The off-season may have none.'));
       return;
     }
+
+    if (final) { view.append(...resultCards(games)); return; }
 
     const cols = final ? 14 : 11;
     const thead = h('thead', null,
