@@ -313,6 +313,8 @@
     const games = state.games;
     const final = state.scope === 'recent';
     if (final) view.append(dayBar());
+    else view.append(h('p', { class: 'hint' }, 'Looking for finished games, final scores or line movement from earlier days? ',
+      h('button', { type: 'button', class: 'linkbtn', onclick: () => { state.scope = 'recent'; refresh(); } }, 'Open past games by date')));
     if (!games.length) {
       const s = state.status;
       view.append(h('div', { class: 'empty' },

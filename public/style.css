@@ -365,3 +365,6 @@ table.form { width: 100%; }
 .strip i.l { background: var(--down-bg); color: var(--down); }
 .strip i.o { background: #dce9ff; color: var(--s1); }
 .strip i.u { background: #ffe8d9; color: var(--s2); }
+
+.hint { margin: 0 0 10px; font-size: var(--t-sm); color: var(--ink-2); }
+.seg button { white-space: nowrap; }
