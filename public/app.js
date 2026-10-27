@@ -485,9 +485,11 @@
     // Upcoming: hide far-off games whose lines bookmakers have taken down (stale prices); keep everything in the next 48 h
     const hasLines = (g) => !!(g.spreads || g.totals);
     const soonish = (g) => Date.parse(g.commence) - Date.now() < 72 * 3600_000;
-    const visible = (g) => final || soonish(g) || (hasLines(g) && g.offered !== false);
-    const games = state.games.filter(visible);
-    const hiddenN = state.games.length - games.length;
+    // main table = the next 3 days only, in date order; games further out with early lines
+    // (e.g. Christmas Day) go to a separate "Later games" list so the days stay consecutive
+    const games = final ? state.games : state.games.filter(soonish);
+    const later = final ? [] : state.games.filter((g) => !soonish(g) && hasLines(g) && g.offered !== false);
+    const hiddenN = state.games.length - games.length - later.length;
     if (final) view.append(dayBar());
     else view.append(h('p', { class: 'hint' }, 'Looking for finished games, final scores or line movement from earlier days? ',
       h('button', { type: 'button', class: 'linkbtn', onclick: () => { state.scope = 'recent'; refresh(); } }, 'Open past games by date')));
@@ -563,6 +565,22 @@
         ] : null));
     }
 
+    const laterList = later.length ? h('section', { class: 'block later' },
+      h('h3', null, `Later games with early lines (${later.length})`),
+      h('p', { class: 'legend' }, 'Some games far ahead (often Christmas or other marquee games) already have lines. Games in between appear in the main table once they are 3 days away.'),
+      h('div', { class: 'log' }, later.map((g) => {
+        const d = new Date(g.commence);
+        return h('article', { class: 'log-row', tabindex: '0', onclick: () => openGame(g.id) },
+          h('div', { class: 'log-top' },
+            h('span', { class: 'when' }, `${T.day.format(d)}, ${T.time.format(d)}`),
+            h('span', { class: 'vs' }, `${ab(g.away)} @ ${ab(g.home)}`),
+            h('span', { class: 'wl' }, rel(g.commence))),
+          h('p', { class: 'next-lines' },
+            g.spreads ? `Spread ${spreadText(g.spreads.now.line, g)}` : null,
+            g.totals ? `${g.spreads ? ' · ' : ''}Total ${num(g.totals.now.line)}` : null,
+            g.fallback ? h('small', null, ' (market avg)') : null));
+      }))) : null;
+
     view.append(
       changeKey(final ? 'between the opening and closing price' : 'between the opening price and now'),
       h('div', { class: 'table-wrap board-wrap' }, h('table', { class: 'board' }, thead, tbody)),
@@ -570,8 +588,9 @@
         'Spread is shown from the favourite (BOS -5.5 = Boston gives 5.5 points). ',
         'Spread move: the line shifted toward the team named; ▲/▼ follow the home team\'s handicap number. Total move: change in points. ',
         `Odds are the latest prices in ${FMT_NAME[state.fmt]} format with the opening price underneath. Click a game for its charts and full price history.`,
-        hiddenN ? ` ${hiddenN} game${hiddenN === 1 ? '' : 's'} more than 3 days away without current lines ${hiddenN === 1 ? 'is' : 'are'} hidden until bookmakers post them.` : '',
-        h('span', { class: 'swipe' }, ' Swipe the table sideways to see every column.')));
+        ' The table shows the next 3 days.',
+        h('span', { class: 'swipe' }, ' Swipe the table sideways to see every column.')),
+      laterList);
   }
 
   // ---------- game page ----------
