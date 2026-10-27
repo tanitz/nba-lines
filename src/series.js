@@ -1,5 +1,6 @@
 export const CONSENSUS = 'consensus';
 import { etDay } from './results.js';
+import { lastPoll } from './db.js';
 
 const r2 = (v) => Math.round(v * 100) / 100;
 const r3 = (v) => Math.round(v * 1000) / 1000;
@@ -63,7 +64,7 @@ function loadRows(db, gameIds, book) {
 }
 
 function gameRow(g) {
-  const endAt = g.last_seen_at < g.commence_time ? g.last_seen_at : g.commence_time;
+  const endAt = g.last_seen_at && g.last_seen_at < g.commence_time ? g.last_seen_at : g.commence_time;
   return {
     id: g.id,
     commence: g.commence_time,
@@ -110,17 +111,33 @@ export function listGames(db, { scope = 'upcoming', book = CONSENSUS, now = new 
     if (!byGame.has(r.game_id)) byGame.set(r.game_id, []);
     byGame.get(r.game_id).push(r);
   }
+  // offered = เจ้ามือยังเปิดราคาอยู่ในการดึงราคาครั้งล่าสุด
+  const okAt = lastPoll(db, 'odds', true)?.at ?? null;
+  // เจ้าที่เลือกยังไม่เปิดราคาแมตช์ไหน ใช้ค่ากลางของเจ้าอื่นแทน (บอกหน้าเว็บด้วย fallback)
+  const missing = book === CONSENSUS ? [] : games.filter((g) => !byGame.has(g.id)).map((g) => g.id);
+  const fb = new Map();
+  for (const r of loadRows(db, missing, CONSENSUS)) {
+    if (!fb.has(r.game_id)) fb.set(r.game_id, []);
+    fb.get(r.game_id).push(r);
+  }
   return games.map((g) => {
-    const s = seriesFromRows(byGame.get(g.id) ?? [], book);
-    return { ...gameRow(g), spreads: summarize(s.spreads), totals: summarize(s.totals) };
+    const fallback = !byGame.has(g.id) && fb.has(g.id);
+    const s = fallback ? seriesFromRows(fb.get(g.id), CONSENSUS) : seriesFromRows(byGame.get(g.id) ?? [], book);
+    return { ...gameRow(g), offered: !!(okAt && g.last_seen_at && g.last_seen_at >= okAt), fallback,
+      spreads: summarize(s.spreads), totals: summarize(s.totals) };
   });
 }
 
 export function gameDetail(db, id, book = CONSENSUS) {
   const g = db.prepare(`SELECT * FROM games WHERE id = ?`).get(id);
   if (!g) return null;
-  const rows = loadRows(db, [id], book);
-  const series = seriesFromRows(rows, book);
+  let rows = loadRows(db, [id], book);
+  let fallback = false;
+  if (!rows.length && book !== CONSENSUS) {
+    rows = loadRows(db, [id], CONSENSUS);
+    fallback = rows.length > 0;
+  }
+  const series = seriesFromRows(rows, fallback ? CONSENSUS : book);
   const books = db.prepare(`
     SELECT s.bookmaker AS key, COALESCE(b.title, s.bookmaker) AS title, COUNT(*) AS points
     FROM snapshots s LEFT JOIN bookmakers b ON b.key = s.bookmaker
@@ -154,7 +171,7 @@ export function gameDetail(db, id, book = CONSENSUS) {
     };
     return { key: b.key, title: b.title, spreads: pick('spreads'), totals: pick('totals') };
   });
-  return { ...gameRow(g), book, books, byBook, series };
+  return { ...gameRow(g), book, fallback, books, byBook, series };
 }
 
 export function listBookmakers(db) {

@@ -394,8 +394,13 @@
       view.append(h('div', { class: 'empty' }, h('strong', null, 'Could not load data'), state.error));
       return;
     }
-    const games = state.games;
     const final = state.scope === 'recent';
+    // Upcoming: hide far-off games whose lines bookmakers have taken down (stale prices); keep everything in the next 48 h
+    const hasLines = (g) => !!(g.spreads || g.totals);
+    const soonish = (g) => Date.parse(g.commence) - Date.now() < 72 * 3600_000;
+    const visible = (g) => final || soonish(g) || (hasLines(g) && g.offered !== false);
+    const games = state.games.filter(visible);
+    const hiddenN = state.games.length - games.length;
     if (final) view.append(dayBar());
     else view.append(h('p', { class: 'hint' }, 'Looking for finished games, final scores or line movement from earlier days? ',
       h('button', { type: 'button', class: 'linkbtn', onclick: () => { state.scope = 'recent'; refresh(); } }, 'Open past games by date')));
@@ -443,12 +448,17 @@
       let note = null;
       if (soon > 0 && soon < 24 * 3600_000) note = rel(g.commence);
       else if (soon <= 0 && !g.score?.completed) note = g.score ? 'Live' : (soon < -4 * 3600_000 ? 'Result pending' : 'Started');
+      let lineNote = null;
+      if (!final && soon > 0 && !hasLines(g)) lineNote = 'Lines not posted yet';
+      else if (!final && soon > 0 && g.offered === false) lineNote = `Lines off the board · last seen ${T.stamp.format(new Date(g.lastSeen))}`;
+      else if (g.fallback) lineNote = `No ${state.status?.bookmakers?.find((b) => b.key === state.book)?.title ?? 'line'} line yet · market avg`;
       const open = () => openGame(g.id);
       tbody.append(h('tr', { class: 'game', onclick: open },
         h('td', { class: 'sticky game-c' },
           h('button', { type: 'button', class: 'match', title: `${g.away} at ${g.home}`, onclick: (e) => { e.stopPropagation(); open(); } },
             ab(g.away), h('span', { class: 'at' }, ' @ '), ab(g.home)),
-          h('span', { class: 'tip' }, T.time.format(d), note ? ` · ${note}` : '')),
+          h('span', { class: 'tip' }, T.time.format(d), note ? ` · ${note}` : ''),
+          lineNote ? h('span', { class: 'tip wait' }, lineNote) : null),
         td(sp ? spreadText(sp.open.line, g) : null, { cls: 'gs' }),
         td(sp ? spreadText(sp.now.line, g) : null, { cls: 'now', dir: sp ? dirOf(sp.delta) : null }),
         moveCell(sp, g, 'spreads'),
@@ -473,6 +483,7 @@
         'Spread is shown from the favourite (BOS -5.5 = Boston gives 5.5 points). ',
         'Spread move: the line shifted toward the team named; ▲/▼ follow the home team\'s handicap number. Total move: change in points. ',
         `Odds are the latest prices in ${FMT_NAME[state.fmt]} format with the opening price underneath. Click a game for its charts and full price history.`,
+        hiddenN ? ` ${hiddenN} game${hiddenN === 1 ? '' : 's'} more than 3 days away without current lines ${hiddenN === 1 ? 'is' : 'are'} hidden until bookmakers post them.` : '',
         h('span', { class: 'swipe' }, ' Swipe the table sideways to see every column.')));
   }
 
@@ -957,8 +968,9 @@
     const sp = g.series.spreads;
     const tt = g.series.totals;
     const v = verdict(g, sp.length ? sp[sp.length - 1].line : null, tt.length ? tt[tt.length - 1].line : null);
-    const bookTitle = state.book === CONSENSUS ? 'Market consensus (median of all bookmakers)'
+    const bookTitle = state.book === CONSENSUS || g.fallback ? 'Market consensus (median of all bookmakers)'
       : (g.books.find((b) => b.key === state.book)?.title ?? state.book);
+    const selTitle = state.status?.bookmakers?.find((b) => b.key === state.book)?.title ?? state.book;
 
     // header
     const head = h('header', { class: 'sheet-head' },
@@ -969,7 +981,8 @@
         started ? h('span', { class: 'pill' }, g.score?.completed ? 'Final' : 'Started')
           : h('span', { class: 'pill live' }, `Tip-off ${rel(g.commence)}`)),
       v ? h('p', { class: 'result' }, h('b', null, v.score), [v.ats, v.ou].filter(Boolean).map((x) => ` · ${x}`).join('')) : null,
-      h('p', { class: 'teams' }, `Prices from ${bookTitle}`));
+      h('p', { class: 'teams' }, `Prices from ${bookTitle}`),
+      g.fallback ? h('p', { class: 'tip wait' }, `${selTitle} has not posted this game yet, so the market average of the other bookmakers is shown.`) : null);
 
     // movement summary: lines AND odds, open vs now
     const summary = h('section', { class: 'block' },

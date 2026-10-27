@@ -43,6 +43,8 @@ export const config = {
     slackMin: num('POLL_SLACK_MIN', 0),
   },
   scoresEveryHours: num('SCORES_EVERY_HOURS', 4),
+  // ตารางแข่ง (/events) ไม่เสียเครดิต: ดึงทุกกี่นาที เพื่อให้เห็นแมตช์ก่อนเจ้ามือเปิดราคา (0 = ปิด)
+  eventsEveryMin: num('EVENTS_EVERY_MIN', 60),
   minCreditsLeft: num('MIN_CREDITS_LEFT', 25),
   adminToken: str('ADMIN_TOKEN'),
 };

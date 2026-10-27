@@ -39,6 +39,8 @@ env:
   POLL_CLOSE_MIN: ${{ vars.POLL_CLOSE_MIN || '60' }}
   POLL_IDLE_MIN: ${{ vars.POLL_IDLE_MIN || '1440' }}
   SCORES_EVERY_HOURS: ${{ vars.SCORES_EVERY_HOURS || '24' }}
+  # ตารางแข่งไม่เสียเครดิต ดึงทุกชั่วโมงให้เห็นแมตช์วันนี้แม้เจ้ามือยังไม่เปิดราคา
+  EVENTS_EVERY_MIN: ${{ vars.EVENTS_EVERY_MIN || '60' }}
   MIN_CREDITS_LEFT: ${{ vars.MIN_CREDITS_LEFT || '10' }}
 
 jobs:

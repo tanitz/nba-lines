@@ -49,7 +49,7 @@ export function openDb(dbPath) {
     CREATE TABLE IF NOT EXISTS polls (
       id                INTEGER PRIMARY KEY AUTOINCREMENT,
       at                TEXT NOT NULL,
-      kind              TEXT NOT NULL,          -- odds | scores
+      kind              TEXT NOT NULL,          -- odds | scores | events
       ok                INTEGER NOT NULL,
       games             INTEGER,
       changes           INTEGER,
@@ -72,6 +72,18 @@ export function upsertGame(db, g, seenAt) {
       away_team     = excluded.away_team,
       last_seen_at  = excluded.last_seen_at
   `).run(g.id, g.commence_time, g.home_team, g.away_team, seenAt, seenAt);
+}
+
+/**
+ * แมตช์จากตารางแข่ง (ยังไม่มีราคา): เพิ่มถ้ายังไม่มี / อัปเดตเวลาแข่ง
+ * ไม่แตะ last_seen_at ซึ่งหมายถึง "เห็นราคาครั้งล่าสุด" ('' = ยังไม่เคยเห็นราคา)
+ */
+export function upsertScheduledGame(db, g, seenAt) {
+  db.prepare(`
+    INSERT INTO games (id, commence_time, home_team, away_team, first_seen_at, last_seen_at)
+    VALUES (?, ?, ?, ?, ?, '')
+    ON CONFLICT(id) DO UPDATE SET commence_time = excluded.commence_time
+  `).run(g.id, g.commence_time, g.home_team, g.away_team, seenAt);
 }
 
 export function upsertBookmaker(db, key, title) {

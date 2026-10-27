@@ -48,6 +48,24 @@ export function fetchOdds(cfg, now = new Date()) {
   return get(`${BASE}/sports/${cfg.sport}/odds?${p}`);
 }
 
+/** ตารางแข่งที่จะมาถึง (ยังไม่มีราคา) — ไม่นับเครดิต */
+export function fetchEvents(cfg, now = new Date(), days = 3) {
+  const p = new URLSearchParams({
+    apiKey: cfg.apiKey,
+    dateFormat: 'iso',
+    commenceTimeFrom: apiTime(now),
+    commenceTimeTo: apiTime(now.getTime() + days * 86400_000),
+  });
+  return get(`${BASE}/sports/${cfg.sport}/events?${p}`);
+}
+
+/** แปลงผลจาก /events เป็นแมตช์ (เฉพาะที่ยังไม่เริ่ม) */
+export function parseEvents(events, fetchedAt) {
+  return (events ?? [])
+    .filter((ev) => ev?.id && ev.home_team && ev.away_team && ev.commence_time && ev.commence_time > fetchedAt)
+    .map((ev) => ({ id: ev.id, commence_time: ev.commence_time, home_team: ev.home_team, away_team: ev.away_team }));
+}
+
 /** ผลการแข่งขันย้อนหลัง daysFrom วัน (ค่าเครดิต 2 เมื่อระบุ daysFrom) */
 export function fetchScores(cfg, daysFrom = 2) {
   const p = new URLSearchParams({ apiKey: cfg.apiKey, daysFrom: String(daysFrom), dateFormat: 'iso' });

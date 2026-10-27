@@ -180,3 +180,25 @@ test('results: closing lines per book + consensus, and games grouped by US Easte
   assert.equal(etDay('2026-10-23T00:00:00Z'), '2026-10-22');            // 20:00 ET ยังเป็นวันที่ 22
   assert.deepEqual(listDays(db, now), [{ d: '2026-10-22', n: 1, done: 1 }]);
 });
+
+test('free /events schedule adds games without touching "last seen with odds"', async () => {
+  const db = openDb(':memory:');
+  let now = new Date('2026-10-27T10:00:00Z');
+  const p = createPoller(db, { poll: { farMin: 1440, dayMin: 720, nearMin: 240, closeMin: 60, idleMin: 1440, tickSec: 60 },
+    minCreditsLeft: 10, scoresEveryHours: 0, eventsEveryMin: 60 }, {
+    now: () => now, log: () => {},
+    fetchOdds: async () => ({ data: [{ ...event(-5.5, 221.5, 'x'), commence_time: '2026-10-28T00:10:00Z' }], credits_remaining: 400, credits_used: 2, credits_last: 2 }),
+    fetchEvents: async () => ({ data: [
+      { id: 'g1', commence_time: '2026-10-28T00:10:00Z', home_team: 'Boston Celtics', away_team: 'New York Knicks' },
+      { id: 'g2', commence_time: '2026-10-28T00:40:00Z', home_team: 'Miami Heat', away_team: 'Chicago Bulls' },
+    ] }),
+  });
+  await p.tick();                                   // events + odds ครั้งแรก
+  const g2 = db.prepare('SELECT * FROM games WHERE id = ?').get('g2');
+  assert.equal(g2.last_seen_at, '');                // ยังไม่มีราคา
+  const list = listGames(db, { now, book: 'consensus' });
+  assert.deepEqual(list.map((g) => [g.id, g.offered, !!g.spreads]), [['g1', true, true], ['g2', false, false]]);
+  now = new Date('2026-10-27T10:30:00Z');
+  await p.tick();                                   // ยังไม่ครบ 60 นาที: ไม่ดึงตารางซ้ำ
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM polls WHERE kind = 'events'").get().n, 1);
+});

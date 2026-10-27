@@ -1,10 +1,10 @@
 import { pathToFileURL } from 'node:url';
 import { config as defaultConfig } from './config.js';
 import {
-  openDb, upsertGame, upsertBookmaker, insertSnapshotIfChanged,
+  openDb, upsertGame, upsertScheduledGame, upsertBookmaker, insertSnapshotIfChanged,
   recordPoll, lastPoll, lastCredits,
 } from './db.js';
-import { fetchOdds, fetchScores, parseOddsEvents, parseScores } from './oddsApi.js';
+import { fetchOdds, fetchScores, fetchEvents, parseOddsEvents, parseScores, parseEvents } from './oddsApi.js';
 
 const MIN = 60_000;
 
@@ -16,6 +16,7 @@ const MIN = 60_000;
 export function createPoller(db, cfg = defaultConfig, deps = {}) {
   const getOdds = deps.fetchOdds ?? fetchOdds;
   const getScores = deps.fetchScores ?? fetchScores;
+  const getEvents = deps.fetchEvents ?? fetchEvents;
   const clock = deps.now ?? (() => new Date());
   const log = deps.log ?? ((...a) => console.log(new Date().toISOString(), ...a));
   let running = false;
@@ -109,6 +110,32 @@ export function createPoller(db, cfg = defaultConfig, deps = {}) {
     }
   }
 
+  function eventsDue(now) {
+    if (!cfg.eventsEveryMin) return false;
+    const last = lastPoll(db, 'events');
+    return !last || now - Date.parse(last.at) >= cfg.eventsEveryMin * MIN;
+  }
+
+  /** ตารางแข่ง 3 วันข้างหน้า (ไม่เสียเครดิต) ให้เห็นแมตช์ก่อนเจ้ามือเปิดราคา */
+  async function pollEvents() {
+    const now = clock();
+    const at = now.toISOString();
+    try {
+      const res = await getEvents(cfg, now);
+      const games = parseEvents(res.data, at);
+      const before = db.prepare('SELECT COUNT(*) AS n FROM games').get().n;
+      for (const g of games) upsertScheduledGame(db, g, at);
+      const added = db.prepare('SELECT COUNT(*) AS n FROM games').get().n - before;
+      recordPoll(db, { at, kind: 'events', ok: true, games: games.length, changes: added });
+      log(`events: ${games.length} แมตช์ใน 3 วัน (ใหม่ ${added})`);
+      return { ok: true, games: games.length, added };
+    } catch (e) {
+      recordPoll(db, { at, kind: 'events', ok: false, error: e.message });
+      log(`events ผิดพลาด: ${e.message}`);
+      return { ok: false, error: e.message };
+    }
+  }
+
   function scoresDue(now) {
     if (!cfg.scoresEveryHours) return false;
     const pending = db.prepare(`
@@ -145,6 +172,7 @@ export function createPoller(db, cfg = defaultConfig, deps = {}) {
     try {
       const now = clock();
       const slack = new Date(now.getTime() + slackMin * MIN);
+      if (eventsDue(slack)) await pollEvents();
       if (slack >= nextOddsAt(now)) await pollOdds();
       if (scoresDue(slack)) await pollScores();
     } finally {
@@ -156,6 +184,7 @@ export function createPoller(db, cfg = defaultConfig, deps = {}) {
     tick,
     pollOdds,
     pollScores,
+    pollEvents,
     nextOddsAt,
     forecastNextOddsAt,
     intervalMinutes: () => intervalMinutes(clock()),
