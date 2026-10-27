@@ -41,6 +41,27 @@
     <p class="poll-msg" id="pollMsg"></p>
   </div>
 
+  <div class="gh-form" id="ghForm" hidden>
+    <div class="gh-top">
+      <p class="gh-msg" id="ghMsg" aria-live="polite"></p>
+      <button type="button" class="gh-x" id="ghClose" aria-label="Close">×</button>
+    </div>
+    <div id="ghSetup" hidden>
+      <label for="ghToken">GitHub token (kept only in this browser)</label>
+      <div class="poll-row">
+        <input id="ghToken" type="password" autocomplete="off" placeholder="github_pat_…">
+        <button type="button" id="ghSave" class="btn">Save &amp; refresh</button>
+      </div>
+      <ol class="gh-help">
+        <li>Open <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">GitHub → new fine-grained token</a>.</li>
+        <li>Repository access: <b>Only select repositories</b> → this site's repository.</li>
+        <li>Permissions → Repository → <b>Actions: Read and write</b>. Nothing else is needed.</li>
+        <li>Generate, copy and paste it here. You only do this once per device.</li>
+      </ol>
+    </div>
+    <button type="button" class="gh-forget" id="ghForget" hidden>Forget the token on this device</button>
+  </div>
+
   <nav class="filters" aria-label="Filters">
     <div class="seg" role="tablist" id="scopeTabs">
       <button type="button" role="tab" data-scope="upcoming" id="tabUpcoming">Upcoming</button>

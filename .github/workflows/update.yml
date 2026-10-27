@@ -11,6 +11,10 @@ on:
         description: "สร้างหน้าเว็บใหม่แม้ไม่ได้ดึงราคา"
         type: boolean
         default: true
+      fetch_odds:
+        description: "ดึงราคาทันที (ปุ่ม Refresh prices บนหน้าเว็บ ใช้ 2 เครดิต)"
+        type: boolean
+        default: false
   push:
     branches: [main]
     paths: ["public/**", "src/**", "scripts/**"]
@@ -70,6 +74,8 @@ jobs:
         id: run
         env:
           FORCE_BUILD: ${{ github.event_name == 'push' || inputs.rebuild == true }}
+          FORCE_ODDS: ${{ inputs.fetch_odds == true }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: node --no-warnings=ExperimentalWarning scripts/ci-run.js
 
       - name: บันทึกฐานข้อมูลกลับไปที่ branch data

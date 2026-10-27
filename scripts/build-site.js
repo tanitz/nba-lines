@@ -22,7 +22,7 @@ export function buildSite(db, outDir, opts = {}) {
   const pub = (f) => path.join(ROOT, 'public', f);
   const html = fs.readFileSync(pub('index.html'), 'utf8')
     .replace('<script src="app.js"></script>',
-      `<script>window.STATIC_BASE = "data/";</script>\n<script src="app.js?v=${Date.now()}"></script>`)
+      `<script>window.STATIC_BASE = "data/"; window.SITE_REPO = ${JSON.stringify(process.env.GITHUB_REPOSITORY || '')};</script>\n<script src="app.js?v=${Date.now()}"></script>`)
     .replace('href="style.css"', `href="style.css?v=${Date.now()}"`);
   fs.writeFileSync(path.join(outDir, 'index.html'), html);
   fs.copyFileSync(pub('app.js'), path.join(outDir, 'app.js'));

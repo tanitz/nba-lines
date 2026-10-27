@@ -204,12 +204,87 @@
     if (s.credits && s.credits.remaining != null) {
       el.append(h('span', null, 'API credits left ', h('b', null, s.credits.remaining.toLocaleString('en-US'))));
     }
+    if (REPO && !s.demo) {
+      el.append(h('button', { type: 'button', class: 'refresh-btn', disabled: !!gh.busy, onclick: ghRefresh },
+        gh.busy ? 'Refreshing…' : '↻ Refresh prices'));
+    }
     if (s.canPoll) {
       el.append(h('button', { type: 'button', class: 'linkbtn', onclick: () => {
         const f = $('#pollForm');
         f.hidden = !f.hidden;
         if (!f.hidden) { $('#tokenInput').value = store.get('token', ''); $('#tokenInput').focus(); }
       } }, 'Fetch now'));
+    }
+  }
+
+  // ---------- "Refresh prices" on the GitHub Pages site ----------
+  // The site is static, so the button asks GitHub to run the update job right away
+  // (workflow_dispatch with fetch_odds). It needs a GitHub token that the visitor keeps in their own browser.
+  const REPO = BASE && window.SITE_REPO ? window.SITE_REPO : null;
+  const gh = { busy: null, timer: null };
+  function ghShow(msg, { setup = false } = {}) {
+    $('#ghForm').hidden = false;
+    $('#ghMsg').textContent = msg;
+    $('#ghSetup').hidden = !setup;
+    $('#ghForget').hidden = setup || !store.get('ghToken', '');
+  }
+  async function ghRefresh() {
+    const token = store.get('ghToken', '');
+    if (!token) {
+      ghShow('To fetch prices on demand, this page needs a GitHub token that may start the site\'s update job. Set it up once on this device.', { setup: true });
+      $('#ghToken').focus();
+      return;
+    }
+    const credits = state.status?.credits?.remaining;
+    ghShow('Asking GitHub to fetch prices now…');
+    let r;
+    try {
+      r = await fetch(`https://api.github.com/repos/${REPO}/actions/workflows/update.yml/dispatches`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' },
+        body: JSON.stringify({ ref: 'main', inputs: { rebuild: true, fetch_odds: true } }),
+      });
+    } catch (e) {
+      ghShow(`Could not reach GitHub: ${e.message}`);
+      return;
+    }
+    if (r.status === 401 || r.status === 403 || r.status === 404) {
+      ghShow(`GitHub refused the token (HTTP ${r.status}). Check that it is for this repository and has Actions: Read and write, then paste it again.`, { setup: true });
+      return;
+    }
+    if (r.status !== 204) {
+      const body = await r.json().catch(() => ({}));
+      ghShow(`GitHub error (HTTP ${r.status}) ${body.message || ''}`);
+      return;
+    }
+    gh.busy = { since: new Date(Date.now() - 5000).toISOString(), at: Date.now() };
+    renderStatus();
+    ghShow(`Fetching prices — usually takes 1–2 minutes. Uses 2 API credits${credits != null ? ` (${credits} left)` : ''}. This page updates by itself.`);
+    clearInterval(gh.timer);
+    gh.timer = setInterval(ghWatch, 10_000);
+  }
+  async function ghWatch() {
+    if (!gh.busy) return;
+    indexCache = null;
+    try {
+      const st = await data.status();
+      const la = st.lastAttempt;
+      if (la && la.at > gh.busy.since) {
+        clearInterval(gh.timer);
+        gh.busy = null;
+        await refresh();
+        ghShow(la.ok
+          ? `Prices updated ${T.time.format(new Date(la.at))}: ${st.lastSuccess?.games ?? 0} games, ${st.lastSuccess?.changes ?? 0} price changes.`
+          : `The fetch ran but failed: ${la.error || 'unknown error'}`);
+        setTimeout(() => { if (!gh.busy) $('#ghForm').hidden = true; }, 15_000);
+        return;
+      }
+    } catch { /* keep waiting */ }
+    if (Date.now() - gh.busy.at > 8 * 60_000) {
+      clearInterval(gh.timer);
+      gh.busy = null;
+      renderStatus();
+      ghShow('Still waiting on GitHub — its queue can be slow. The new prices will appear here once the job finishes.');
     }
   }
 
@@ -1154,6 +1229,16 @@
   $('#bookSelect').addEventListener('change', (e) => { state.book = e.target.value; store.set('book', state.book); refresh(); });
   $('#fmtSelect').addEventListener('change', (e) => { state.fmt = e.target.value; store.set('fmt', state.fmt); render(); });
   $('#pollGo').addEventListener('click', pollNow);
+  $('#ghSave').addEventListener('click', () => {
+    const t = $('#ghToken').value.trim();
+    if (!t) { $('#ghToken').focus(); return; }
+    store.set('ghToken', t);
+    $('#ghToken').value = '';
+    ghRefresh();
+  });
+  $('#ghToken').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#ghSave').click(); });
+  $('#ghForget').addEventListener('click', () => { store.set('ghToken', ''); ghShow('Token removed from this device.'); });
+  $('#ghClose').addEventListener('click', () => { $('#ghForm').hidden = true; });
   $('#tokenInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') pollNow(); });
 
   if (!STATIC) {

@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { config, ROOT } from '../src/config.js';
-import { openDb } from '../src/db.js';
+import { openDb, lastCredits } from '../src/db.js';
 import { createPoller } from '../src/poller.js';
 import { buildSite } from './build-site.js';
 
@@ -19,6 +19,12 @@ const db = openDb(config.dbPath);
 const count = () => db.prepare('SELECT COUNT(*) AS n FROM polls').get().n;
 const before = count();
 const poller = createPoller(db, config);
+if (process.env.FORCE_ODDS === 'true') {
+  // กดปุ่ม Refresh prices บนหน้าเว็บ: ดึงราคาทันที ถ้าเครดิตยังไม่ต่ำกว่าขั้นต่ำ
+  const cr = lastCredits(db);
+  if (cr && cr.credits_remaining < config.minCreditsLeft) console.log(`เครดิตเหลือ ${cr.credits_remaining} ต่ำกว่าขั้นต่ำ ไม่ดึงราคา`);
+  else await poller.pollOdds();
+}
 await poller.tick({ slackMin: config.poll.slackMin || 3 });
 const polled = count() > before;
 
