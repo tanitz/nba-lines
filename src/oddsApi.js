@@ -49,7 +49,7 @@ export function fetchOdds(cfg, now = new Date()) {
 }
 
 /** ตารางแข่งที่จะมาถึง (ยังไม่มีราคา) — ไม่นับเครดิต */
-export function fetchEvents(cfg, now = new Date(), days = 3) {
+export function fetchEvents(cfg, now = new Date(), days = 7) {
   const p = new URLSearchParams({
     apiKey: cfg.apiKey,
     dateFormat: 'iso',

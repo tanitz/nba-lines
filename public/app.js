@@ -484,8 +484,8 @@
     const final = state.scope === 'recent';
     // Upcoming: hide far-off games whose lines bookmakers have taken down (stale prices); keep everything in the next 48 h
     const hasLines = (g) => !!(g.spreads || g.totals);
-    const soonish = (g) => Date.parse(g.commence) - Date.now() < 72 * 3600_000;
-    // main table = the next 3 days only, in date order; games further out with early lines
+    const soonish = (g) => Date.parse(g.commence) - Date.now() < 7 * 86400_000;
+    // main table = the next 7 days only, in date order; games further out with early lines
     // (e.g. Christmas Day) go to a separate "Later games" list so the days stay consecutive
     const games = final ? state.games : state.games.filter(soonish);
     const later = final ? [] : state.games.filter((g) => !soonish(g) && hasLines(g) && g.offered !== false);
@@ -522,10 +522,18 @@
 
     const tbody = h('tbody');
     let lastDay = null;
+    const noGames = (fromKey, toKey) => {
+      // mark empty calendar days between two game days so the dates read consecutively
+      for (let t = Date.parse(`${fromKey}T12:00:00Z`) + 864e5; t < Date.parse(`${toKey}T12:00:00Z`); t += 864e5) {
+        tbody.append(h('tr', { class: 'day empty-day' }, h('th', { colspan: String(cols), scope: 'rowgroup' },
+          h('span', null, dayFmtLong.format(new Date(t))), h('small', null, ' · no NBA games'))));
+      }
+    };
     for (const g of games) {
       const d = new Date(g.commence);
       const key = final ? state.day : T.dayKey.format(d);
       if (key !== lastDay) {
+        if (!final && lastDay) noGames(lastDay, key);
         lastDay = key;
         tbody.append(h('tr', { class: 'day' }, h('th', { colspan: String(cols), scope: 'rowgroup' },
           h('span', null, final ? `Game day ${dayLabel(state.day, true)} (US Eastern)` : T.day.format(d)))));
@@ -567,7 +575,7 @@
 
     const laterList = later.length ? h('section', { class: 'block later' },
       h('h3', null, `Later games with early lines (${later.length})`),
-      h('p', { class: 'legend' }, 'Some games far ahead (often Christmas or other marquee games) already have lines. Games in between appear in the main table once they are 3 days away.'),
+      h('p', { class: 'legend' }, 'Some games far ahead (often Christmas or other marquee games) already have lines. Games in between appear in the main table once they are 7 days away.'),
       h('div', { class: 'log' }, later.map((g) => {
         const d = new Date(g.commence);
         return h('article', { class: 'log-row', tabindex: '0', onclick: () => openGame(g.id) },
@@ -588,7 +596,7 @@
         'Spread is shown from the favourite (BOS -5.5 = Boston gives 5.5 points). ',
         'Spread move: the line shifted toward the team named; ▲/▼ follow the home team\'s handicap number. Total move: change in points. ',
         `Odds are the latest prices in ${FMT_NAME[state.fmt]} format with the opening price underneath. Click a game for its charts and full price history.`,
-        ' The table shows the next 3 days.',
+        ' The table shows the next 7 days; days without NBA games are marked.',
         h('span', { class: 'swipe' }, ' Swipe the table sideways to see every column.')),
       laterList);
   }

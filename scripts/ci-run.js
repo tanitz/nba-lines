@@ -25,6 +25,8 @@ if (process.env.FORCE_ODDS === 'true') {
   if (cr && cr.credits_remaining < config.minCreditsLeft) console.log(`เครดิตเหลือ ${cr.credits_remaining} ต่ำกว่าขั้นต่ำ ไม่ดึงราคา`);
   else await poller.pollOdds();
 }
+// รันจาก push / กดเอง: ดึงตารางแข่งด้วย (ไม่เสียเครดิต)
+if (process.env.FORCE_BUILD === 'true' && config.eventsEveryMin) await poller.pollEvents();
 await poller.tick({ slackMin: config.poll.slackMin || 3 });
 const polled = count() > before;
 

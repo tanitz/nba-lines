@@ -116,7 +116,7 @@ export function createPoller(db, cfg = defaultConfig, deps = {}) {
     return !last || now - Date.parse(last.at) >= cfg.eventsEveryMin * MIN;
   }
 
-  /** ตารางแข่ง 3 วันข้างหน้า (ไม่เสียเครดิต) ให้เห็นแมตช์ก่อนเจ้ามือเปิดราคา */
+  /** ตารางแข่ง 7 วันข้างหน้า (ไม่เสียเครดิต) ให้เห็นแมตช์ก่อนเจ้ามือเปิดราคา */
   async function pollEvents() {
     const now = clock();
     const at = now.toISOString();
@@ -127,7 +127,7 @@ export function createPoller(db, cfg = defaultConfig, deps = {}) {
       for (const g of games) upsertScheduledGame(db, g, at);
       const added = db.prepare('SELECT COUNT(*) AS n FROM games').get().n - before;
       recordPoll(db, { at, kind: 'events', ok: true, games: games.length, changes: added });
-      log(`events: ${games.length} แมตช์ใน 3 วัน (ใหม่ ${added})`);
+      log(`events: ${games.length} แมตช์ใน 7 วัน (ใหม่ ${added})`);
       return { ok: true, games: games.length, added };
     } catch (e) {
       recordPoll(db, { at, kind: 'events', ok: false, error: e.message });
