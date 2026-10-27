@@ -526,7 +526,7 @@
       // mark empty calendar days between two game days so the dates read consecutively
       for (let t = Date.parse(`${fromKey}T12:00:00Z`) + 864e5; t < Date.parse(`${toKey}T12:00:00Z`); t += 864e5) {
         tbody.append(h('tr', { class: 'day empty-day' }, h('th', { colspan: String(cols), scope: 'rowgroup' },
-          h('span', null, dayFmtLong.format(new Date(t))), h('small', null, ' · no NBA games'))));
+          h('span', null, dayFmtLong.format(new Date(t))), h('small', null, ' · no games listed yet'))));
       }
     };
     for (const g of games) {
@@ -596,7 +596,7 @@
         'Spread is shown from the favourite (BOS -5.5 = Boston gives 5.5 points). ',
         'Spread move: the line shifted toward the team named; ▲/▼ follow the home team\'s handicap number. Total move: change in points. ',
         `Odds are the latest prices in ${FMT_NAME[state.fmt]} format with the opening price underneath. Click a game for its charts and full price history.`,
-        ' The table shows the next 7 days; days without NBA games are marked.',
+        ' The table shows the next 7 days. “No games listed yet” means the odds service has no game for that date so far (no game that day, or bookmakers have not listed it yet).',
         h('span', { class: 'swipe' }, ' Swipe the table sideways to see every column.')),
       laterList);
   }
