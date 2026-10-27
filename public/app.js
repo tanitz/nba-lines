@@ -257,7 +257,10 @@
       return;
     }
     if (r.status === 401 || r.status === 403 || r.status === 404) {
-      ghShow(`GitHub refused the token (HTTP ${r.status}). Check that it is for this repository and has Actions: Read and write, then paste it again.`, { setup: true });
+      // bad / expired token: drop it and fall back to the no-token way
+      store.set('ghToken', '');
+      $('#ghOpen').href = `https://github.com/${REPO}/actions/workflows/update.yml`;
+      ghShow(`The saved GitHub token did not work (HTTP ${r.status}) and was removed. Start the update on GitHub instead (uses 2 API credits):`, { noToken: true });
       return;
     }
     if (r.status !== 204) {
