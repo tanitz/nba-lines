@@ -230,9 +230,9 @@
     $('#ghForget').hidden = setup || noToken || !store.get('ghToken', '');
   }
   function ghWait(msg) {
-    gh.busy = { since: new Date(Date.now() - 5000).toISOString(), at: Date.now() };
+    gh.busy = { since: new Date(Date.now() - 5000).toISOString(), at: Date.now(), quiet: !msg };
     renderStatus();
-    ghShow(msg);
+    if (msg) ghShow(msg); else $('#ghForm').hidden = true;
     clearInterval(gh.timer);
     gh.timer = setInterval(ghWatch, 10_000);
   }
@@ -243,8 +243,8 @@
       ghShow('Prices are fetched by the site\'s update job on GitHub. Start it there (uses 2 API credits):', { noToken: true });
       return;
     }
-    const credits = state.status?.credits?.remaining;
-    ghShow('Asking GitHub to fetch prices now…');
+    gh.busy = { since: new Date().toISOString(), at: Date.now(), quiet: true };
+    renderStatus();
     let r;
     try {
       r = await fetch(`https://api.github.com/repos/${REPO}/actions/workflows/update.yml/dispatches`, {
@@ -253,22 +253,25 @@
         body: JSON.stringify({ ref: 'main', inputs: { rebuild: true, fetch_odds: true } }),
       });
     } catch (e) {
+      gh.busy = null; renderStatus();
       ghShow(`Could not reach GitHub: ${e.message}`);
       return;
     }
     if (r.status === 401 || r.status === 403 || r.status === 404) {
       // bad / expired token: drop it and fall back to the no-token way
+      gh.busy = null; renderStatus();
       store.set('ghToken', '');
       $('#ghOpen').href = `https://github.com/${REPO}/actions/workflows/update.yml`;
       ghShow(`The saved GitHub token did not work (HTTP ${r.status}) and was removed. Start the update on GitHub instead (uses 2 API credits):`, { noToken: true });
       return;
     }
     if (r.status !== 204) {
+      gh.busy = null; renderStatus();
       const body = await r.json().catch(() => ({}));
       ghShow(`GitHub error (HTTP ${r.status}) ${body.message || ''}`);
       return;
     }
-    ghWait(`Fetching prices — usually takes 1–2 minutes. Uses 2 API credits${credits != null ? ` (${credits} left)` : ''}. This page updates by itself.`);
+    ghWait(null);
   }
   async function ghWatch() {
     if (!gh.busy) return;
@@ -278,8 +281,10 @@
       const la = st.lastAttempt;
       if (la && la.at > gh.busy.since) {
         clearInterval(gh.timer);
+        const quiet = gh.busy?.quiet;
         gh.busy = null;
         await refresh();
+        if (quiet && la.ok) return;
         ghShow(la.ok
           ? `Prices updated ${T.time.format(new Date(la.at))}: ${st.lastSuccess?.games ?? 0} games, ${st.lastSuccess?.changes ?? 0} price changes.`
           : `The fetch ran but failed: ${la.error || 'unknown error'}`);
