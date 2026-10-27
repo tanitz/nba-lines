@@ -451,3 +451,5 @@ table.splits th[scope="row"] small { display: block; font-weight: 500; color: va
 .gh-help { margin: 6px 0 0; padding-left: 20px; color: var(--ink-2); font-size: var(--t-xs); display: flex; flex-direction: column; gap: 2px; }
 .gh-help a { color: var(--accent); }
 .gh-forget { align-self: flex-start; border: 0; background: none; padding: 0; color: var(--muted); text-decoration: underline; font-size: var(--t-xs); cursor: pointer; }
+.gh-open { display: inline-block; text-decoration: none; text-align: center; align-self: flex-start; }
+.gh-small { margin: 6px 0 4px; font-size: var(--t-xs); color: var(--ink-2); }

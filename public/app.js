@@ -222,17 +222,25 @@
   // (workflow_dispatch with fetch_odds). It needs a GitHub token that the visitor keeps in their own browser.
   const REPO = BASE && window.SITE_REPO ? window.SITE_REPO : null;
   const gh = { busy: null, timer: null };
-  function ghShow(msg, { setup = false } = {}) {
+  function ghShow(msg, { setup = false, noToken = false } = {}) {
     $('#ghForm').hidden = false;
     $('#ghMsg').textContent = msg;
     $('#ghSetup').hidden = !setup;
-    $('#ghForget').hidden = setup || !store.get('ghToken', '');
+    $('#ghNoToken').hidden = !noToken;
+    $('#ghForget').hidden = setup || noToken || !store.get('ghToken', '');
+  }
+  function ghWait(msg) {
+    gh.busy = { since: new Date(Date.now() - 5000).toISOString(), at: Date.now() };
+    renderStatus();
+    ghShow(msg);
+    clearInterval(gh.timer);
+    gh.timer = setInterval(ghWatch, 10_000);
   }
   async function ghRefresh() {
     const token = store.get('ghToken', '');
     if (!token) {
-      ghShow('To fetch prices on demand, this page needs a GitHub token that may start the site\'s update job. Set it up once on this device.', { setup: true });
-      $('#ghToken').focus();
+      $('#ghOpen').href = `https://github.com/${REPO}/actions/workflows/update.yml`;
+      ghShow('Prices are fetched by the site\'s update job on GitHub. Start it there (uses 2 API credits):', { noToken: true });
       return;
     }
     const credits = state.status?.credits?.remaining;
@@ -257,11 +265,7 @@
       ghShow(`GitHub error (HTTP ${r.status}) ${body.message || ''}`);
       return;
     }
-    gh.busy = { since: new Date(Date.now() - 5000).toISOString(), at: Date.now() };
-    renderStatus();
-    ghShow(`Fetching prices — usually takes 1–2 minutes. Uses 2 API credits${credits != null ? ` (${credits} left)` : ''}. This page updates by itself.`);
-    clearInterval(gh.timer);
-    gh.timer = setInterval(ghWatch, 10_000);
+    ghWait(`Fetching prices — usually takes 1–2 minutes. Uses 2 API credits${credits != null ? ` (${credits} left)` : ''}. This page updates by itself.`);
   }
   async function ghWatch() {
     if (!gh.busy) return;
@@ -280,7 +284,7 @@
         return;
       }
     } catch { /* keep waiting */ }
-    if (Date.now() - gh.busy.at > 8 * 60_000) {
+    if (Date.now() - gh.busy.at > 15 * 60_000) {
       clearInterval(gh.timer);
       gh.busy = null;
       renderStatus();
@@ -1239,6 +1243,8 @@
   $('#ghToken').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#ghSave').click(); });
   $('#ghForget').addEventListener('click', () => { store.set('ghToken', ''); ghShow('Token removed from this device.'); });
   $('#ghClose').addEventListener('click', () => { $('#ghForm').hidden = true; });
+  $('#ghOpen').addEventListener('click', () => ghWait('Waiting for the update job you started on GitHub — this page refreshes by itself when the new prices land (usually 1–2 minutes after you press Run workflow).'));
+  $('#ghWantToken').addEventListener('click', () => { ghShow('Save a GitHub token once on this device and the button will start the update by itself.', { setup: true }); $('#ghToken').focus(); });
   $('#tokenInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') pollNow(); });
 
   if (!STATIC) {

@@ -46,6 +46,11 @@
       <p class="gh-msg" id="ghMsg" aria-live="polite"></p>
       <button type="button" class="gh-x" id="ghClose" aria-label="Close">×</button>
     </div>
+    <div id="ghNoToken" hidden>
+      <a class="btn gh-open" id="ghOpen" target="_blank" rel="noopener">Open GitHub and run the update</a>
+      <p class="gh-small">On GitHub (signed in to your account): tap <b>Run workflow</b> → <b>Run workflow</b>. Come back here — the page updates by itself in 1–2 minutes. No token needed.</p>
+      <button type="button" class="gh-forget" id="ghWantToken">Want one-tap refresh instead? Save a token on this device</button>
+    </div>
     <div id="ghSetup" hidden>
       <label for="ghToken">GitHub token (kept only in this browser)</label>
       <div class="poll-row">

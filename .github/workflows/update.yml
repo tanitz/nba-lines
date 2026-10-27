@@ -12,9 +12,9 @@ on:
         type: boolean
         default: true
       fetch_odds:
-        description: "ดึงราคาทันที (ปุ่ม Refresh prices บนหน้าเว็บ ใช้ 2 เครดิต)"
+        description: "ดึงราคาทันที (ใช้ 2 เครดิต)"
         type: boolean
-        default: false
+        default: true
   push:
     branches: [main]
     paths: ["public/**", "src/**", "scripts/**"]
